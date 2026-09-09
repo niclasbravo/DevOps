@@ -1,12 +1,12 @@
-# DevOps
+# GameMatch
 
 # Actividad Práctica 1 — Arrancando con DevOps
 *Asignatura: DevOps (Sec/ML)*
 
 ## Integrantes
-- [Nicolas Bravo — [n.bravog@udd.cl]
-- [Maximiliano Mella] — [n.bravog@udd.cl]
-- [Martin Lorca] — [mlorca@udd.cl]
+- Nicolas Bravo — n.bravog@udd.cl
+- Maximiliano Mella — m.mellac@udd.cl
+- Martin Lorca — mlorca@udd.cl
 
 ## 1. Descripción del proyecto
 
