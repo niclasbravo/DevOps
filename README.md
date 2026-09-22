@@ -6,7 +6,7 @@
 ## Integrantes
 - Nicolas Bravo — n.bravog@udd.cl
 - Maximiliano Mella — m.mellac@udd.cl (PR de prueba Actividad 2)
-- Martín Lorca — m.lorca@udd.cl (PR de prueba Actividad 2)
+- Martín Lorca — mlorca@udd.cl (PR de prueba Actividad 2 - listo)
 
 ## 1. Descripción del proyecto
 
