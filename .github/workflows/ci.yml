@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Build y pruebas (pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v5
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Verificar que la app carga
+        run: python -c "from app.main import app; print('App cargada:', app.title)"
+
+      - name: Correr pruebas
+        run: pytest -v --junitxml=test-results.xml
+
+      - name: Resumen de pruebas
+        if: always()
+        run: |
+          python - <<'EOF' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET
+          root = ET.parse("test-results.xml").getroot()
+          s = root if root.tag == "testsuite" else root.find("testsuite")
+          total, fail, err, skip = (int(s.get(k, 0)) for k in ("tests", "failures", "errors", "skipped"))
+          print("## Resultado de pruebas")
+          print(f"| Total | Pasaron | Fallaron | Errores | Omitidas | Tiempo |")
+          print(f"|---|---|---|---|---|---|")
+          print(f"| {total} | {total-fail-err-skip} | {fail} | {err} | {skip} | {float(s.get('time', 0)):.2f}s |")
+          EOF
