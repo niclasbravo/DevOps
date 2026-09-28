@@ -32,6 +32,21 @@ Link: [https://github.com/niclasbravo/DevOps]
 ## 4. Tablero de trabajo (Trello)
 Link: [https://trello.com/b/8W1BZoVG]
 
+## 5. Backend y pruebas (Mini-Dojo FlashBuild)
+
+[![CI](https://github.com/niclasbravo/DevOps/actions/workflows/ci.yml/badge.svg)](https://github.com/niclasbravo/DevOps/actions/workflows/ci.yml)
+
+API mínima en FastAPI con un recomendador por similitud de tags (Jaccard) sobre un catálogo en memoria.
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+uvicorn app.main:app --reload   # http://127.0.0.1:8000/docs
+pytest -v                       # corre las pruebas
+```
+
+El workflow `.github/workflows/ci.yml` instala dependencias y corre `pytest` en cada Pull Request hacia `main` y en cada push a `main`.
+
 
 
 
