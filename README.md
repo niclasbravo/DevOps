@@ -46,10 +46,3 @@ pytest -v                       # corre las pruebas
 ```
 
 El workflow `.github/workflows/ci.yml` instala dependencias y corre `pytest` en cada Pull Request hacia `main` y en cada push a `main`.
-
-
-
-
-## Prueba Webhook.
-
-##   prueba2
