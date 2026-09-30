@@ -27,7 +27,7 @@ GameMatch es una plataforma web que recomienda videojuegos indie a partir de los
 
 **Control de versiones:** Git + GitHub, ya utilizado en clases, con soporte para colaboración, revisión de código (pull requests) e integración continua vía GitHub Actions.
 
-**Gestión de tareas:** Trello, por su simplicidad para visualizar el flujo de trabajo del equipo en columnas (Por hacer / En progreso / Hecho).
+**Gestión de tareas:** GitHub Projects, integrado con el repositorio: los issues se crean con plantilla y se mueven automáticamente al mergear el Pull Request vinculado. En la Actividad 1 se partió con Trello y en la Actividad 2 se migró a GitHub Projects para aprovechar esa automatización.
 
 **Otras herramientas de colaboración:** Discord para comunicación diaria del equipo, y Notion para documentar decisiones de diseño (criterios de similitud, tags considerados, etc.).
 
@@ -36,8 +36,8 @@ Estas decisiones buscan aplicar desde el día uno los principios DevOps revisado
 ## 3. Repositorio de GitHub
 Link: [https://github.com/niclasbravo/DevOps]
 
-## 4. Tablero de trabajo (Trello)
-Link: [https://trello.com/b/8W1BZoVG]
+## 4. Tablero de trabajo (GitHub Projects)
+Link: [https://github.com/users/niclasbravo/projects/1/views/1]
 
 ## 5. Backend, pruebas y contenedor
 
@@ -85,7 +85,7 @@ Revisión hecha al cierre de la Entrega 1 para confirmar que ninguna credencial 
 |---|---|---|
 | Repositorio GitHub | Nicolas (owner/admin); Maximiliano y Martín (write) | No en la práctica. GitHub no permite dar Admin a colaboradores en repositorios personales (ver Actividad 2). Se mitiga con la protección de `main`, que **también aplica al admin**: ningún cambio entra sin PR, CI en verde y la aprobación de otro integrante. |
 | Tablero del proyecto | Los 3 integrantes como admin | No. Pendiente de la auditoría de la Actividad 2, cerrado. |
-| Canal de Discord y webhook de GitHub | ⚠️ por confirmar | ⚠️ por confirmar |
+| Canal de Discord y webhook de GitHub | Nicolas (dueño del servidor); Maximiliano y Martín con rol Administrador | No. Cualquiera de los 3 puede gestionar el canal y el webhook |
 | Credenciales del pipeline | Ninguna personal. El CI usa el `GITHUB_TOKEN` que GitHub genera en cada ejecución | No |
 | Imagen Docker publicada | Vinculada al repositorio en GitHub Packages | No. Se publica sola desde el pipeline, no desde el computador de nadie |
 | Secretos en el código | No hay claves, tokens ni contraseñas en el repositorio (revisado) | No |
