@@ -50,3 +50,81 @@ jobs:
           print(f"|---|---|---|---|---|---|")
           print(f"| {total} | {total-fail-err-skip} | {fail} | {err} | {skip} | {float(s.get('time', 0)):.2f}s |")
           EOF
+
+  docker:
+    name: Docker (build, smoke test y publicación)
+    runs-on: ubuntu-latest
+    needs: tests
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v5
+
+      - name: Definir nombre de la imagen
+        run: |
+          # GitHub Packages exige el nombre en minúsculas
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Construir imagen
+        run: |
+          docker build \
+            --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "$IMAGE:sha-$SHORT_SHA" -t "$IMAGE:latest" backend
+
+      - name: Levantar contenedor
+        run: |
+          start=$(date +%s.%N)
+          docker run -d --name gamematch -p 8000:8000 "$IMAGE:latest"
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8000/health > /dev/null && break
+            sleep 1
+          done
+          end=$(date +%s.%N)
+          echo "STARTUP_SECONDS=$(python3 -c "print(round($end-$start, 1))")" >> "$GITHUB_ENV"
+
+      - name: Smoke test del contenedor
+        run: |
+          set -e
+          echo "→ /health responde ok"
+          test "$(curl -sf http://localhost:8000/health)" = '{"status":"ok"}'
+
+          echo "→ /recommendations devuelve resultados"
+          curl -sf -X POST http://localhost:8000/recommendations \
+            -H "Content-Type: application/json" \
+            -d '{"liked_games": ["Hades"], "limit": 3}' | tee /tmp/recs.json
+          python3 -c "import json; r=json.load(open('/tmp/recs.json')); assert len(r) == 3, r"
+
+          echo "→ el proceso no corre como root"
+          test "$(docker exec gamematch id -u)" != "0"
+          echo "Smoke test OK"
+
+      - name: Logs del contenedor (si algo falló)
+        if: failure()
+        run: docker logs gamematch
+
+      - name: Publicar imagen en GitHub Packages (solo en main)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker push "$IMAGE:sha-$SHORT_SHA"
+          docker push "$IMAGE:latest"
+
+      - name: Resumen de la imagen
+        if: always()
+        run: |
+          size=$(docker image inspect "$IMAGE:latest" --format '{{.Size}}' 2>/dev/null || echo 0)
+          published="No (se publica solo al mergear a main)"
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then published="Sí"; fi
+          {
+            echo "## Imagen Docker"
+            echo "| Imagen | Tamaño | Arranque hasta /health | Publicada |"
+            echo "|---|---|---|---|"
+            echo "| \`$IMAGE:sha-$SHORT_SHA\` | $((size / 1024 / 1024)) MB | ${STARTUP_SECONDS:-?} s | $published |"
+            echo ""
+            echo "Ejecutar: \`docker run -p 8000:8000 $IMAGE:latest\`"
+          } >> "$GITHUB_STEP_SUMMARY"
