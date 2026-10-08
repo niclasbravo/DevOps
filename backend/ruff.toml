@@ -1,0 +1,5 @@
+# Reglas fijas para que el resultado no cambie cuando salga una versión nueva de ruff.
+line-length = 120
+
+[lint]
+select = ["E", "F", "I"]
