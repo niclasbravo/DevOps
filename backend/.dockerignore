@@ -1,0 +1,12 @@
+# Solo entra a la imagen lo necesario para correr la API
+tests/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+test-results.xml
+requirements-dev.txt
+pytest.ini
+Dockerfile
+.dockerignore
