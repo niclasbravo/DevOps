@@ -11,12 +11,15 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 2) Código de la aplicación
+# 2) Código de la aplicación y modelo entrenado (verificado con su SHA-256 al cargar)
 COPY app/ ./app/
+COPY models/ ./models/
 
-# 3) No correr como root dentro del contenedor
-RUN useradd --create-home --uid 10001 gamematch
+# 3) No correr como root dentro del contenedor; data/ es el único directorio escribible (votos)
+RUN useradd --create-home --uid 10001 gamematch \
+    && mkdir -p /app/data && chown gamematch /app/data
 USER gamematch
+ENV FEEDBACK_PATH=/app/data/feedback.jsonl
 
 EXPOSE 8000
 

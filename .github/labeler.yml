@@ -16,3 +16,10 @@ documentation:
       - any-glob-to-any-file:
           - '**/*.md'
           - 'docs/**'
+
+ml:
+  - head-branch: ['^ml/']
+  - changed-files:
+      - any-glob-to-any-file:
+          - 'backend/ml/**'
+          - 'backend/models/**'

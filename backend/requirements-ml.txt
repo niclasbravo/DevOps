@@ -1,0 +1,4 @@
+# Solo para entrenar (python -m ml.fetch / ml.train); no entran a la imagen Docker
+-r requirements.txt
+pandas==3.0.6
+requests==2.34.2

@@ -1,0 +1,129 @@
+name: Entrenamiento ML
+
+# Pipeline de entrenamiento fuera de línea (pasos 1 a 6 del informe):
+# descarga juegos indie de IGDB, limpia, entrena, evalúa contra Jaccard y, si el
+# modelo supera las metas, abre un PR con models/ actualizado. El CI de siempre
+# prueba ese PR y, al mergearlo, construye la imagen Docker con el modelo nuevo.
+#
+# Requiere en Settings > Secrets and variables > Actions:
+#   - TWITCH_CLIENT_ID y TWITCH_CLIENT_SECRET (app de dev.twitch.tv con acceso a IGDB)
+#   - ML_PR_TOKEN (opcional): PAT con contents/pull-requests. Los PR abiertos con
+#     GITHUB_TOKEN no disparan el CI; sin este token hay que correr el CI a mano
+#     (Actions > CI > Run workflow) sobre la rama del PR.
+#   - Settings > Actions > General: "Allow GitHub Actions to create and approve pull requests".
+on:
+  schedule:
+    - cron: "0 6 1 * *"  # día 1 de cada mes, 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      max_games:
+        description: "Máximo de juegos a descargar de IGDB"
+        default: "8000"
+
+concurrency:
+  group: entrenamiento
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  entrenar:
+    name: Descargar, entrenar y evaluar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      passed: ${{ steps.train.outputs.passed }}
+      ndcg_drop: ${{ steps.train.outputs.ndcg_drop }}
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Descargar código
+        uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.ML_PR_TOKEN || github.token }}
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: "Paso 1: descargar juegos indie desde IGDB"
+        env:
+          TWITCH_CLIENT_ID: ${{ secrets.TWITCH_CLIENT_ID }}
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          MAX_GAMES: ${{ inputs.max_games || '8000' }}  # por env, no interpolado en el script
+        run: python -m ml.fetch --max-games "$MAX_GAMES"
+
+      - name: "Pasos 2 a 6: limpiar, entrenar, evaluar contra Jaccard y guardar"
+        id: train
+        run: python -m ml.train
+
+      - name: Resumen de métricas
+        if: always()
+        run: test -f data/metrics.md && cat data/metrics.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Guardar datos y métricas como artefacto
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: entrenamiento-${{ github.run_number }}
+          path: |
+            backend/data/raw/*.csv
+            backend/data/metrics.*
+          retention-days: 90
+
+      - name: Probar la API con el modelo nuevo
+        run: pytest -q
+
+      - name: Abrir PR con el modelo nuevo
+        env:
+          GH_TOKEN: ${{ secrets.ML_PR_TOKEN || github.token }}
+        run: |
+          if git diff --quiet -- models/; then
+            echo "El modelo no cambió; no hay PR que abrir."
+            exit 0
+          fi
+          branch="ml/reentrenamiento-$(date +%F)-${GITHUB_RUN_NUMBER}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add models/
+          git commit -m "Reentrena el modelo de recomendación ($(date +%F))"
+          git push origin "$branch"
+          {
+            echo "Reentrenamiento automático del workflow [Entrenamiento ML](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})."
+            echo ""
+            cat data/metrics.md
+          } > /tmp/pr-body.md
+          gh pr create --base main --head "$branch" --title "Reentrenamiento del modelo ($(date +%F))" --body-file /tmp/pr-body.md
+
+  alertar:
+    name: Avisar a Discord
+    needs: entrenar
+    if: ${{ always() && (needs.entrenar.result != 'success' || needs.entrenar.outputs.ndcg_drop == 'true') }}
+    runs-on: ubuntu-latest
+    env:
+      DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+    steps:
+      - name: Enviar alerta
+        if: ${{ env.DISCORD_WEBHOOK != '' }}
+        uses: sarisia/actions-status-discord@eb045afee445dc055c18d3d90bd0f244fd062708 # v1.16.0
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          status: failure
+          title: "Entrenamiento ML GameMatch"
+          description: >-
+            ${{ needs.entrenar.outputs.ndcg_drop == 'true' && 'El nDCG@10 bajó respecto al modelo en producción.' || 'El entrenamiento falló o el modelo no superó a Jaccard.' }}
+            Revisa el resumen del run.

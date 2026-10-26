@@ -10,3 +10,9 @@ requirements-dev.txt
 pytest.ini
 Dockerfile
 .dockerignore
+# Pipeline de entrenamiento y datos: la imagen solo lleva app/ y models/
+ml/
+data/
+requirements-ml.txt
+.env
+.ruff_cache/
