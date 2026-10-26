@@ -1,0 +1,18 @@
+# Etiquetas automáticas para PRs (actions/labeler).
+# Dentro de cada etiqueta, las condiciones se combinan con "o":
+# basta que se cumpla una (rama o archivos) para poner la etiqueta.
+feature:
+  - head-branch: ['^feature/', '^feat/']
+
+bug:
+  - head-branch: ['^fix/', '^bugfix/']
+
+urgente:
+  - head-branch: ['^hotfix/']
+
+documentation:
+  - head-branch: ['^docs/', '^doc/']
+  - changed-files:
+      - any-glob-to-any-file:
+          - '**/*.md'
+          - 'docs/**'

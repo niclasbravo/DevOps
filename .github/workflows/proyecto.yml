@@ -1,0 +1,34 @@
+name: Tablero
+
+# Agrega cada Issue y PR nuevo al GitHub Project del equipo.
+# Requiere configurar en Settings > Secrets and variables > Actions:
+#   - Variable PROJECT_URL: URL del proyecto (https://github.com/users/<usuario>/projects/<n>)
+#   - Secret ADD_TO_PROJECT_PAT: token con permisos "project" (GITHUB_TOKEN no alcanza)
+# Los cambios de estado (En revisión / Hecho) los manejan los workflows
+# integrados del propio Project (pestaña Workflows del tablero).
+on:
+  issues:
+    types: [opened, reopened]
+  pull_request:
+    types: [opened, reopened]
+
+permissions: {}
+
+jobs:
+  agregar:
+    name: Agregar al proyecto
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_URL: ${{ vars.PROJECT_URL }}
+      TOKEN: ${{ secrets.ADD_TO_PROJECT_PAT }}
+    steps:
+      - name: Agregar al GitHub Project
+        if: ${{ env.PROJECT_URL != '' && env.TOKEN != '' }}
+        uses: actions/add-to-project@v2.0.0
+        with:
+          project-url: ${{ vars.PROJECT_URL }}
+          github-token: ${{ secrets.ADD_TO_PROJECT_PAT }}
+
+      - name: Aviso de configuración pendiente
+        if: ${{ env.PROJECT_URL == '' || env.TOKEN == '' }}
+        run: echo "::warning::Falta la variable PROJECT_URL o el secret ADD_TO_PROJECT_PAT; no se agregó al proyecto."

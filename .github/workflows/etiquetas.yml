@@ -1,0 +1,22 @@
+name: Etiquetas
+
+# Se usa pull_request (no pull_request_target): el workflow corre desde la
+# propia rama del PR y se puede probar antes de mergear. El repo no recibe forks.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  etiquetar:
+    name: Etiquetar por rama y por archivos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/labeler@v7
+        with:
+          configuration-path: .github/labeler.yml
