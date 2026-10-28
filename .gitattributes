@@ -1,0 +1,2 @@
+# El modelo es binario: sin conversión de fin de línea (cambiaría su SHA-256)
+*.joblib binary

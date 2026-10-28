@@ -47,6 +47,14 @@ jobs:
       - name: Verificar que la app carga
         run: python -c "from app.main import app; print('App cargada:', app.title)"
 
+      - name: Verificar modelo ML (SHA-256)
+        run: |
+          python - <<'EOF'
+          from app.model import verify_model_file
+          m = verify_model_file()  # falla si el archivo no coincide con model_meta.json
+          print("Modelo OK:", m["n_games"], "juegos, commit", m["commit"][:7], "sha256", m["sha256"][:12])
+          EOF
+
       - name: Correr pruebas
         run: pytest -v --junitxml=test-results.xml
 
@@ -111,6 +119,10 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"liked_games": ["Hades"], "limit": 3}' | tee /tmp/recs.json
           python3 -c "import json; r=json.load(open('/tmp/recs.json')); assert len(r) == 3, r"
+
+          echo "→ la API usa el modelo ML (no el respaldo Jaccard)"
+          curl -sf http://localhost:8000/stats | tee /tmp/stats.json
+          python3 -c "import json; s=json.load(open('/tmp/stats.json')); assert s['recommender'] == 'ml', s"
 
           echo "→ el proceso no corre como root"
           test "$(docker exec gamematch id -u)" != "0"

@@ -4,3 +4,10 @@ __pycache__/
 .venv/
 venv/
 test-results.xml
+.ruff_cache/
+
+# Credenciales locales (TWITCH_CLIENT_ID / TWITCH_CLIENT_SECRET): nunca al repo
+.env
+backend/.env
+# Datos descargados de IGDB y votos: se publican como artefacto del workflow, no en git
+backend/data/

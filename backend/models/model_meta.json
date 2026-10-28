@@ -1,0 +1,55 @@
+{
+  "sha256": "b5952864a1905ffd8eb5a4b71c67f52924c1d7bb74dc1f8d6d4d3933a2b829d4",
+  "commit": "21465001b6bc46a6b3e1febf1ad2377298bf7b9f",
+  "trained_at": "2026-10-26T17:51:01+00:00",
+  "data_file": "igdb_2026-10-26.csv",
+  "n_games": 7996,
+  "sklearn_version": "1.9.1",
+  "clean_report": {
+    "raw": 8000,
+    "non_english": 19,
+    "dropped_empty": 0,
+    "duplicates": 4,
+    "keywords_kept": 2130,
+    "keywords_dropped": 1198,
+    "clean": 7996,
+    "empty_text_ratio": 0.003
+  },
+  "metrics": {
+    "model": {
+      "similar_games": {
+        "precision@10": 0.20680721361442725,
+        "ndcg@10": 0.3295367988947742,
+        "queries": 3937
+      },
+      "equipo": {
+        "precision@10": 0.060000000000000005,
+        "ndcg@10": 0.13052340403505983,
+        "queries": 30
+      },
+      "coverage": 0.9120810405202602,
+      "latency_p95_ms": 2.8510649339295924
+    },
+    "jaccard": {
+      "similar_games": {
+        "precision@10": 0.19880619761239524,
+        "ndcg@10": 0.31772685338982115,
+        "queries": 3937
+      },
+      "equipo": {
+        "precision@10": 0.05333333333333334,
+        "ndcg@10": 0.11550674759805925,
+        "queries": 30
+      },
+      "coverage": 0.8884442221110556
+    },
+    "weights": {
+      "text": 2.0,
+      "genres": 1.0,
+      "themes": 1.0,
+      "game_modes": 1.0,
+      "keywords": 1.0
+    },
+    "popularity_penalty": 0.0
+  }
+}
