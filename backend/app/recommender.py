@@ -47,6 +47,16 @@ def recommend_jaccard(liked_games: list[str], tags: list[str] | None = None, lim
     return scored[:limit]
 
 
+def canonical_title(title: str) -> str | None:
+    """El título tal como figura en el catálogo, o None si el juego no existe."""
+    model = get_model()
+    if model is not None:
+        index = model.find(title)
+        return None if index is None else model.games[index]["title"]
+    game = find_game(title)
+    return None if game is None else game["title"]
+
+
 def active_recommender() -> str:
     """'ml' si la API está usando el modelo entrenado, 'jaccard' si usa el respaldo."""
     return "ml" if get_model() is not None else "jaccard"

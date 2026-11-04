@@ -1,6 +1,8 @@
 """Matriz RBAC: cada fila es una celda de las tablas 4.2 y 4.3 de la spec."""
 
 import os
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 
 import pytest
@@ -8,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from app.auth import create_account
 from app.cli import create_admin
+from app.cli import main as cli_main
 from app.crypto import encrypt_email, pseudonymize
 from app.db import connect
 from app.main import app
@@ -38,6 +41,8 @@ MATRIZ = [
     *_protegida("GET", "/me", 200, 200, 200),
     *_protegida("GET", "/me/feedback", 200, 200, 200),
     *_protegida("GET", "/reports/feedback", 403, 200, 200),
+    *_protegida("PATCH", "/me", 200, 200, 200),
+    *_protegida("DELETE", "/me", 204, 204, 409),  # el admin de la prueba es el último: ver test_auth
     *_protegida("POST", "/feedback", 201, 403, 403),
     *_protegida("GET", "/admin/model", 403, 403, 200),
     *_protegida("GET", "/admin/accounts", 403, 403, 200),
@@ -53,6 +58,8 @@ def _cuerpo(ruta: str) -> dict | None:
         return {"game": client.get("/games", params={"limit": 1}).json()[0]["title"], "vote": 1}
     if ruta == "/recommendations":
         return {"tags": ["roguelike"]}
+    if ruta == "/me":
+        return {"current_password": "una-clave-larga-1"}
     if ruta.endswith("/role"):
         return {"role": "analista"}
     if ruta.endswith("/status"):
@@ -73,11 +80,15 @@ def test_matriz_rbac(cuentas, nueva_cuenta, rol, metodo, ruta, esperado):
     assert resp.status_code == esperado
 
 
-def test_todo_endpoint_protegido_figura_en_la_matriz():
-    """Una ruta nueva sin fila en la matriz hace fallar esta prueba."""
-    publicas = {"/auth/register", "/auth/login"}
-    cubiertas = {fila[2] for fila in MATRIZ} | publicas
-    rutas = {ruta.replace("{account_id}", "{id}") for ruta in app.openapi()["paths"]}
+def test_todo_endpoint_figura_en_la_matriz():
+    """Un método o una ruta nueva sin fila en la matriz hace fallar esta prueba."""
+    publicas = {("POST", "/auth/register"), ("POST", "/auth/login")}
+    cubiertas = {(fila[1], fila[2]) for fila in MATRIZ} | publicas
+    rutas = {
+        (metodo.upper(), ruta.replace("{account_id}", "{id}"))
+        for ruta, operaciones in app.openapi()["paths"].items()
+        for metodo in operaciones
+    }
     assert rutas <= cubiertas
 
 
@@ -175,3 +186,60 @@ def test_create_admin_crea_la_cuenta():
 def test_create_admin_valida_los_datos(alias, clave):
     with pytest.raises(ValueError):
         create_admin(alias, clave)
+
+
+def _admins_activos() -> int:
+    with closing(connect()) as conn:
+        return conn.execute(
+            """SELECT COUNT(*) FROM accounts a JOIN roles r ON r.id = a.role_id
+               WHERE r.name = 'admin' AND a.is_active = 1"""
+        ).fetchone()[0]
+
+
+def _borrar(_, headers):
+    return client.delete("/me", headers=headers)
+
+
+def _suspender(objetivo, headers):
+    return client.patch(f"/admin/accounts/{objetivo}/status", headers=headers, json={"is_active": False})
+
+
+def _degradar(objetivo, headers):
+    return client.patch(f"/admin/accounts/{objetivo}/role", headers=headers, json={"role": "usuario"})
+
+
+@pytest.mark.parametrize("accion", [_borrar, _suspender, _degradar], ids=["borrar", "suspender", "degradar"])
+def test_dos_admins_a_la_vez_no_dejan_el_sistema_sin_admin(nueva_cuenta, accion):
+    for _ in range(8):
+        (uno, cabeceras_uno), (otro, cabeceras_otro) = nueva_cuenta("admin"), nueva_cuenta("admin")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda args: accion(*args), [(otro, cabeceras_uno), (uno, cabeceras_otro)]))
+        assert _admins_activos() >= 1
+        with closing(connect()) as conn, conn:
+            conn.execute("DELETE FROM accounts")
+
+
+def test_sin_clave_de_seudonimos_cambiar_rol_no_se_aplica(cuentas, nueva_cuenta, monkeypatch):
+    objetivo, headers_objetivo = nueva_cuenta()
+    monkeypatch.delenv("GM_PSEUDONYM_KEY")
+    resp = client.patch(f"/admin/accounts/{objetivo}/role", headers=cuentas["admin"][1], json={"role": "analista"})
+    assert resp.status_code == 503
+    assert client.get("/me", headers=headers_objetivo).json()["role"] == "usuario"
+
+
+def test_sin_clave_de_seudonimos_suspender_no_se_aplica(cuentas, nueva_cuenta, monkeypatch):
+    objetivo, headers_objetivo = nueva_cuenta()
+    monkeypatch.delenv("GM_PSEUDONYM_KEY")
+    resp = client.patch(f"/admin/accounts/{objetivo}/status", headers=cuentas["admin"][1], json={"is_active": False})
+    assert resp.status_code == 503
+    assert client.get("/me", headers=headers_objetivo).status_code == 200
+
+
+def test_create_admin_no_imprime_la_clave_rechazada(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["app.cli", "create-admin", "--alias", "jefa"])
+    monkeypatch.setattr("getpass.getpass", lambda *_: "MiClaveCort")
+    with pytest.raises(SystemExit) as salida:
+        cli_main()
+    capturado = capsys.readouterr()
+    assert salida.value.code != 0
+    assert "MiClaveCort" not in capturado.out + capturado.err

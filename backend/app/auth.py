@@ -81,13 +81,16 @@ def _is_locked(account: sqlite3.Row) -> bool:
     return locked_until is not None and dt.datetime.fromisoformat(locked_until) > _now()
 
 
-def _register_failure(conn: sqlite3.Connection, account: sqlite3.Row) -> None:
-    failures = account["failed_logins"] + 1
-    if failures >= MAX_FAILED_LOGINS:
-        until = (_now() + dt.timedelta(minutes=LOCK_MINUTES)).isoformat()
-        conn.execute("UPDATE accounts SET failed_logins = 0, locked_until = ? WHERE id = ?", (until, account["id"]))
-    else:
-        conn.execute("UPDATE accounts SET failed_logins = ? WHERE id = ?", (failures, account["id"]))
+def _register_failure(conn: sqlite3.Connection, account_id: str) -> None:
+    """Una sola sentencia: los intentos simultáneos no pueden pisarse el contador."""
+    until = (_now() + dt.timedelta(minutes=LOCK_MINUTES)).isoformat()
+    conn.execute(
+        """UPDATE accounts SET
+             locked_until = CASE WHEN failed_logins + 1 >= :max THEN :until ELSE locked_until END,
+             failed_logins = CASE WHEN failed_logins + 1 >= :max THEN 0 ELSE failed_logins + 1 END
+           WHERE id = :id""",
+        {"max": MAX_FAILED_LOGINS, "until": until, "id": account_id},
+    )
 
 
 def _authenticate(alias: str, password: str) -> str | None:
@@ -99,7 +102,7 @@ def _authenticate(alias: str, password: str) -> str | None:
         if account is None or _is_locked(account) or not account["is_active"]:
             return None
         if not valid:
-            _register_failure(conn, account)
+            _register_failure(conn, account["id"])
             return None
         new_hash = hash_password(password) if needs_rehash(stored) else stored
         conn.execute(
@@ -151,12 +154,12 @@ def require_permission(code: str):
     return dependency
 
 
-def is_last_admin(account_id: str) -> bool:
-    with closing(connect()) as conn:
-        admins = conn.execute(
-            """SELECT a.id FROM accounts a JOIN roles r ON r.id = a.role_id
-               WHERE r.name = 'admin' AND a.is_active = 1"""
-        ).fetchall()
+def is_last_admin(conn: sqlite3.Connection, account_id: str) -> bool:
+    """Debe llamarse dentro de `write_transaction`, para que dos admins no se eliminen a la vez."""
+    admins = conn.execute(
+        """SELECT a.id FROM accounts a JOIN roles r ON r.id = a.role_id
+           WHERE r.name = 'admin' AND a.is_active = 1"""
+    ).fetchall()
     return [row["id"] for row in admins] == [account_id]
 
 

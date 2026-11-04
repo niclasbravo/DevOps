@@ -1,6 +1,7 @@
 """Pruebas de registro, login y tokens."""
 
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 
 import jwt
@@ -293,3 +294,27 @@ def test_acceso_sin_sesion_queda_auditado_sin_actor():
 
 def test_stats_no_expone_datos_del_modelo():
     assert "model" not in client.get("/stats").json()
+
+
+def test_bloqueo_resiste_intentos_concurrentes():
+    _registrar()
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda _: _login(password="otra-clave-larga-2"), range(8)))
+    assert _cuenta()["locked_until"] is not None
+
+
+def test_sin_clave_de_seudonimos_patch_me_no_se_aplica(nueva_cuenta, monkeypatch):
+    _, headers = nueva_cuenta()
+    alias = client.get("/me", headers=headers).json()["alias"]
+    monkeypatch.delenv("GM_PSEUDONYM_KEY")
+    cuerpo = {"current_password": CLAVE, "new_password": "clave-nueva-larga-3"}
+    assert client.patch("/me", headers=headers, json=cuerpo).status_code == 503
+    assert _login(alias, CLAVE).status_code == 200
+
+
+def test_sin_clave_de_seudonimos_delete_me_no_se_aplica(nueva_cuenta, monkeypatch):
+    _, headers = nueva_cuenta()
+    monkeypatch.delenv("GM_PSEUDONYM_KEY")
+    assert client.delete("/me", headers=headers).status_code == 503
+    with closing(connect()) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 1

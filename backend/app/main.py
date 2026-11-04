@@ -15,14 +15,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.admin import router as admin_router
 from app.auth import require_permission
 from app.auth import router as auth_router
-from app.catalog import CATALOG, find_game
+from app.catalog import CATALOG
 from app.crypto import pseudonymize
 from app.db import init_db, save_vote
 from app.errors import register_error_handlers
 from app.logging_safe import configure_logging
 from app.me import router as me_router
 from app.model import get_model
-from app.recommender import active_recommender, recommend
+from app.recommender import active_recommender, canonical_title, recommend
 from app.reports import router as reports_router
 
 
@@ -109,11 +109,10 @@ def get_recommendations(req: RecommendationRequest) -> list[dict]:
 
 @app.post("/feedback", status_code=201)
 def post_feedback(fb: Feedback, account: sqlite3.Row = Depends(require_permission("feedback:write"))) -> dict:
-    model = get_model()
-    known = model.find(fb.game) is not None if model is not None else find_game(fb.game) is not None
-    if not known:
+    title = canonical_title(fb.game)  # el título del catálogo: "hades" y "Hades" son el mismo voto
+    if title is None:
         raise HTTPException(status_code=404, detail=f"Juego desconocido: {fb.game}")
-    save_vote(pseudonymize(account["id"]), fb.game, fb.vote)
+    save_vote(pseudonymize(account["id"]), title, fb.vote)
     return {"status": "ok"}
 
 
