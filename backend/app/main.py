@@ -12,6 +12,7 @@ from typing import Literal
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.catalog import CATALOG, find_game
@@ -30,6 +31,8 @@ app = FastAPI(title="GameMatch", description="Recomendador de videojuegos indie"
 # Últimas latencias de /recommendations (ms), para medir el p95 en producción.
 _latencies: deque[float] = deque(maxlen=1000)
 _feedback_lock = threading.Lock()
+
+INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 class RecommendationRequest(BaseModel):
@@ -59,6 +62,12 @@ async def measure_latency(request: Request, call_next):
     if request.url.path == "/recommendations":
         _latencies.append(elapsed_ms)
     return response
+
+
+@app.get("/", include_in_schema=False)
+def index() -> FileResponse:
+    """Página web mínima que consume la API."""
+    return FileResponse(INDEX_HTML, media_type="text/html")
 
 
 @app.get("/health")

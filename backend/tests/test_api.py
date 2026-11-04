@@ -15,6 +15,13 @@ def test_health_responde_ok():
     assert resp.json() == {"status": "ok"}
 
 
+def test_pagina_principal_sirve_html():
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/html")
+    assert "GameMatch" in resp.text
+
+
 def test_listado_de_juegos_no_vacio():
     resp = client.get("/games")
     assert resp.status_code == 200
