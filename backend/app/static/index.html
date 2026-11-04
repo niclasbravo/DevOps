@@ -44,12 +44,12 @@
     .tabs button[aria-selected="true"] { background: var(--panel); color: var(--text); box-shadow: 0 1px 0 var(--border); }
 
     label { display: block; font-size: 0.875rem; color: var(--muted); margin-bottom: 6px; }
-    input[type="text"] {
+    input[type="text"], input[type="password"] {
       width: 100%; padding: 10px 12px; margin-bottom: 10px;
       background: var(--panel-2); color: var(--text);
       border: 1px solid var(--border); border-radius: 8px; font: inherit;
     }
-    input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    input[type="text"]:focus, input[type="password"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
     .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
     .chip {
@@ -90,6 +90,24 @@
     }
     .votes button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
 
+    .session { display: flex; gap: 10px; align-items: center; justify-content: flex-end; min-height: 2em; color: var(--muted); font-size: 0.875rem; }
+    .link { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
+    dialog {
+      width: min(380px, calc(100vw - 32px)); padding: 20px;
+      background: var(--panel); color: var(--text);
+      border: 1px solid var(--border); border-radius: var(--radius);
+    }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+    dialog h2 { margin: 0 0 4px; font-size: 1.15rem; }
+    dialog .hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 14px; }
+    dialog .actions { display: flex; gap: 8px; margin-top: 6px; }
+    dialog .actions .primary { margin-left: 0; flex: 1; }
+    .secondary {
+      flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+      background: var(--panel-2); color: var(--text); font: inherit; cursor: pointer;
+    }
+    .dialog-error { min-height: 1.4em; margin: 10px 0 0; color: var(--danger); font-size: 0.85rem; }
+
     footer { color: var(--muted); font-size: 0.8rem; padding-top: 32px; padding-bottom: 32px; }
     footer a { color: inherit; }
     [hidden] { display: none !important; }
@@ -105,6 +123,10 @@
   <header>
     <h1>Game<span>Match</span></h1>
     <p class="lead">Descubre juegos indie parecidos a los que ya te gustan.</p>
+    <div class="session">
+      <span id="session-label">Sin sesión</span>
+      <button type="button" class="link" id="session-button">Iniciar sesión</button>
+    </div>
   </header>
 
   <main>
@@ -148,6 +170,23 @@
     <a href="/docs">API</a>
   </footer>
 
+  <dialog id="session-dialog" aria-labelledby="session-title">
+    <form id="session-form">
+      <h2 id="session-title">Tu cuenta</h2>
+      <p class="hint" id="session-hint">Solo necesitas un alias y una contraseña.</p>
+      <label for="session-alias">Alias (no uses tu nombre real)</label>
+      <input type="text" id="session-alias" autocomplete="username" required>
+      <label for="session-password">Contraseña (de 12 a 128 caracteres)</label>
+      <input type="password" id="session-password" autocomplete="current-password" required>
+      <div class="actions">
+        <button class="primary" type="submit" value="login">Entrar</button>
+        <button class="secondary" type="submit" value="register">Crear cuenta</button>
+      </div>
+      <p class="dialog-error" id="session-error" role="alert"></p>
+      <button type="button" class="link" id="session-cancel">Cancelar</button>
+    </form>
+  </dialog>
+
   <template id="card-tpl">
     <li class="card">
       <span class="rank"></span>
@@ -167,26 +206,91 @@
     const $ = (id) => document.getElementById(id);
     let mode = "games";
 
-    // Id anónimo para /feedback; si el navegador no deja guardar, se usa uno por sesión.
-    function anonymousId() {
-      const fresh = () => Math.random().toString(36).slice(2, 12);
-      try {
-        let id = localStorage.getItem("gamematch-uid");
-        if (!id) {
-          id = fresh();
-          localStorage.setItem("gamematch-uid", id);
-        }
-        return id;
-      } catch {
-        return fresh();
-      }
-    }
-    const userId = anonymousId();
+    // El token vive solo en esta variable: no se guarda en el navegador y recargar cierra la sesión.
+    let token = null;
+    let pendingVote = null;
 
     function setStatus(text, isError = false) {
       $("status").textContent = text;
       $("status").classList.toggle("error", isError);
     }
+
+    function showSession(alias) {
+      $("session-label").textContent = alias ? `Sesión: ${alias}` : "Sin sesión";
+      $("session-button").textContent = alias ? "Salir" : "Iniciar sesión";
+    }
+
+    function logout() {
+      token = null;
+      showSession(null);
+    }
+
+    function openSessionDialog(hint) {
+      $("session-hint").textContent = hint;
+      $("session-error").textContent = "";
+      $("session-dialog").showModal();
+    }
+
+    async function postJson(path, body) {
+      return fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+
+    async function login(alias, password) {
+      const resp = await postJson("/auth/login", { alias, password });
+      if (!resp.ok) {
+        throw new Error(resp.status === 503 ? "El servicio de cuentas no está disponible." : "Alias o contraseña incorrectos.");
+      }
+      token = (await resp.json()).access_token;
+      showSession(alias);
+    }
+
+    async function register(alias, password) {
+      const resp = await postJson("/auth/register", { alias, password });
+      if (resp.status === 409) throw new Error("Ese alias no está disponible.");
+      if (resp.status === 422) {
+        throw new Error("Usa un alias de 3 a 30 letras, números, - o _, y una contraseña de 12 a 128 caracteres.");
+      }
+      if (!resp.ok) throw new Error("No se pudo crear la cuenta.");
+      await login(alias, password);
+    }
+
+    $("session-button").addEventListener("click", () => {
+      if (token) logout();
+      else openSessionDialog("Solo necesitas un alias y una contraseña.");
+    });
+
+    $("session-cancel").addEventListener("click", () => {
+      pendingVote = null;
+      $("session-dialog").close();
+    });
+
+    // Cerrar con Esc también descarta el voto: no debe enviarse en un login posterior.
+    $("session-dialog").addEventListener("cancel", () => {
+      pendingVote = null;
+    });
+
+    $("session-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const alias = $("session-alias").value.trim();
+      const password = $("session-password").value;
+      try {
+        await (event.submitter.value === "register" ? register(alias, password) : login(alias, password));
+      } catch (error) {
+        $("session-error").textContent = error.message;
+        return;
+      }
+      $("session-password").value = "";
+      $("session-dialog").close();
+      if (pendingVote) {
+        const { game, vote, card } = pendingVote;
+        pendingVote = null;
+        sendVote(game, vote, card);
+      }
+    });
 
     // Pestañas: juegos o tags
     document.querySelectorAll("[role=tab]").forEach((tab) => {
@@ -271,13 +375,24 @@
     }
 
     async function sendVote(game, vote, card) {
+      if (!token) {
+        pendingVote = { game, vote, card };
+        openSessionDialog("Inicia sesión o crea una cuenta para votar.");
+        return;
+      }
       const resp = await fetch("/feedback", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: userId, game, vote }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ game, vote }),
       });
+      if (resp.status === 401) {
+        logout();
+        pendingVote = { game, vote, card };
+        openSessionDialog("Tu sesión venció. Vuelve a entrar para votar.");
+        return;
+      }
       if (!resp.ok) {
-        setStatus("No se pudo guardar tu voto.", true);
+        setStatus(resp.status === 403 ? "Tu cuenta no tiene permiso para votar." : "No se pudo guardar tu voto.", true);
         return;
       }
       card.querySelectorAll("[data-vote]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.vote) === vote)));

@@ -1,5 +1,6 @@
 """API de GameMatch."""
 
+import sqlite3
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -7,15 +8,19 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.catalog import CATALOG, find_game
+from app.admin import router as admin_router
+from app.auth import require_permission
+from app.auth import router as auth_router
+from app.catalog import CATALOG
 from app.crypto import MissingKeyError, pseudonymize
 from app.db import init_db, save_vote
+from app.me import router as me_router
 from app.model import get_model
-from app.recommender import active_recommender, recommend
+from app.recommender import active_recommender, canonical_title, recommend
 
 
 @asynccontextmanager
@@ -29,6 +34,10 @@ app = FastAPI(title="GameMatch", description="Recomendador de videojuegos indie"
 
 # Últimas latencias de /recommendations (ms), para medir el p95 en producción.
 _latencies: deque[float] = deque(maxlen=1000)
+
+app.include_router(auth_router)
+app.include_router(me_router)
+app.include_router(admin_router)
 
 INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 
@@ -47,10 +56,9 @@ class Recommendation(BaseModel):
 
 
 class Feedback(BaseModel):
-    # El id se guarda seudonimizado, nunca tal como llega.
+    # La identidad sale del token, nunca del cuerpo de la petición.
     model_config = ConfigDict(extra="forbid")
 
-    user_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$", examples=["a1b2c3"])
     game: str = Field(min_length=1, max_length=200, examples=["Hades"])
     vote: Literal[1, -1]
 
@@ -100,12 +108,11 @@ def get_recommendations(req: RecommendationRequest) -> list[dict]:
 
 
 @app.post("/feedback", status_code=201)
-def post_feedback(fb: Feedback) -> dict:
-    model = get_model()
-    known = model.find(fb.game) is not None if model is not None else find_game(fb.game) is not None
-    if not known:
+def post_feedback(fb: Feedback, account: sqlite3.Row = Depends(require_permission("feedback:write"))) -> dict:
+    title = canonical_title(fb.game)  # el título del catálogo: "hades" y "Hades" son el mismo voto
+    if title is None:
         raise HTTPException(status_code=404, detail=f"Juego desconocido: {fb.game}")
-    save_vote(pseudonymize(fb.user_id), fb.game, fb.vote)
+    save_vote(pseudonymize(account["id"]), title, fb.vote)
     return {"status": "ok"}
 
 
@@ -122,6 +129,4 @@ def stats() -> dict:
             "p95": round(float(np.percentile(latencies, 95)), 1) if latencies else None,
         },
     }
-    if model is not None:
-        info["model"] = {k: model.meta.get(k) for k in ("commit", "sha256", "trained_at", "data_file")}
     return info

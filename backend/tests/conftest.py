@@ -1,9 +1,14 @@
 """Datos sintéticos compartidos por las pruebas del modelo."""
 
+import itertools
 import secrets
 
 import pandas as pd
 import pytest
+
+from app.auth import create_account, create_token
+
+CLAVE_PRUEBA = "una-clave-larga-1"
 
 # Tres grupos bien separados: el modelo debería recomendar dentro del mismo grupo.
 GROUPS = {
@@ -60,6 +65,18 @@ def entorno_seguro(monkeypatch, tmp_path):
     for name in ("GM_PSEUDONYM_KEY", "GM_EMAIL_KEY", "GM_JWT_SECRET"):
         monkeypatch.setenv(name, secrets.token_urlsafe(48))
     monkeypatch.setenv("GM_DB_PATH", str(tmp_path / "gamematch.db"))
+
+
+@pytest.fixture
+def nueva_cuenta():
+    """Crea una cuenta sintética y devuelve (id, cabeceras con su token)."""
+    contador = itertools.count(1)
+
+    def crear(rol: str = "usuario") -> tuple[str, dict]:
+        account_id = create_account(f"{rol}_{next(contador)}", CLAVE_PRUEBA, role=rol)
+        return account_id, {"Authorization": f"Bearer {create_token(account_id)}"}
+
+    return crear
 
 
 @pytest.fixture

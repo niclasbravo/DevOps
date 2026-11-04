@@ -24,44 +24,47 @@ def _votos() -> list:
         return conn.execute("SELECT pseudonym, game, vote, voted_on FROM feedback ORDER BY id").fetchall()
 
 
-def test_voto_guarda_seudonimo_y_solo_fecha():
-    game = _juego()
-    assert client.post("/feedback", json={"user_id": "anon-123", "game": game, "vote": 1}).status_code == 201
+def test_voto_guarda_seudonimo_y_solo_fecha(nueva_cuenta):
+    account_id, headers = nueva_cuenta()
+    assert client.post("/feedback", headers=headers, json={"game": _juego(), "vote": 1}).status_code == 201
     (fila,) = _votos()
-    assert fila["pseudonym"] == pseudonymize("anon-123")
-    assert "anon-123" not in fila["pseudonym"]
+    assert fila["pseudonym"] == pseudonymize(account_id)
+    assert account_id not in fila["pseudonym"]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", fila["voted_on"])
 
 
-def test_voto_no_crea_el_archivo_antiguo(tmp_path, monkeypatch):
+def test_voto_no_crea_el_archivo_antiguo(tmp_path, monkeypatch, nueva_cuenta):
     monkeypatch.chdir(tmp_path)
-    client.post("/feedback", json={"user_id": "a", "game": _juego(), "vote": 1})
+    _, headers = nueva_cuenta()
+    client.post("/feedback", headers=headers, json={"game": _juego(), "vote": 1})
     assert not (tmp_path / "data" / "feedback.jsonl").exists()
 
 
-@pytest.mark.parametrize(
-    "ruta,cuerpo",
-    [
-        ("/feedback", {"user_id": "a", "game": "Hades", "vote": 1, "birthdate": "2000-01-01"}),
-        ("/recommendations", {"tags": ["roguelike"], "email": "persona@example.com"}),
-    ],
-)
-def test_campo_extra_se_rechaza(ruta, cuerpo):
-    assert client.post(ruta, json=cuerpo).status_code == 422
+def test_campo_extra_en_feedback_se_rechaza(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    cuerpo = {"game": "Hades", "vote": 1, "birthdate": "2000-01-01"}
+    assert client.post("/feedback", headers=headers, json=cuerpo).status_code == 422
 
 
-def test_volver_a_votar_actualiza_el_voto():
+def test_campo_extra_en_recomendaciones_se_rechaza():
+    cuerpo = {"tags": ["roguelike"], "email": "persona@example.com"}
+    assert client.post("/recommendations", json=cuerpo).status_code == 422
+
+
+def test_volver_a_votar_actualiza_el_voto(nueva_cuenta):
+    _, headers = nueva_cuenta()
     game = _juego()
-    assert client.post("/feedback", json={"user_id": "a", "game": game, "vote": 1}).status_code == 201
-    assert client.post("/feedback", json={"user_id": "a", "game": game, "vote": -1}).status_code == 201
+    assert client.post("/feedback", headers=headers, json={"game": game, "vote": 1}).status_code == 201
+    assert client.post("/feedback", headers=headers, json={"game": game, "vote": -1}).status_code == 201
     (fila,) = _votos()
     assert fila["vote"] == -1
 
 
-def test_sin_clave_feedback_responde_503_y_lo_publico_funciona(monkeypatch):
+def test_sin_clave_feedback_responde_503_y_lo_publico_funciona(monkeypatch, nueva_cuenta):
+    _, headers = nueva_cuenta()
     game = _juego()
     monkeypatch.delenv("GM_PSEUDONYM_KEY")
-    resp = client.post("/feedback", json={"user_id": "a", "game": game, "vote": 1})
+    resp = client.post("/feedback", headers=headers, json={"game": game, "vote": 1})
     assert resp.status_code == 503
     assert "GM_PSEUDONYM_KEY" not in resp.text
     assert client.get("/health").status_code == 200
@@ -113,3 +116,62 @@ def test_si_la_migracion_falla_no_borra_el_archivo(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError):
         migrate_feedback(path)
     assert path.exists()
+
+
+def test_variantes_del_titulo_son_un_solo_voto(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    game = _juego()
+    for variante in (game, game.upper(), f"  {game.lower()} "):
+        assert client.post("/feedback", headers=headers, json={"game": variante, "vote": 1}).status_code == 201
+    (fila,) = _votos()
+    assert fila["game"] == game
+
+
+def _bytes(path, *lineas: bytes) -> None:
+    path.write_bytes(b"\n".join(lineas) + b"\n")
+
+
+@pytest.mark.parametrize(
+    "corrupta",
+    [
+        b"caf\xe9",
+        '{"user_id":"a","game":"Hades","vote":1,"ts":"2026-10-30"}'.encode()[:-2] + "é".encode()[:1],
+        b'{"user_id":"\\ud800","game":"Hades","vote":1,"ts":"2026-10-30"}',
+        b'{"user_id":"a","game":"\\ud800","vote":1,"ts":"2026-10-30"}',
+        b'{"user_id":"a","game":"Hades","vote":1,"ts":"\\ud800"}',
+        b"[" * 200_000,
+        b"1" * 5000,
+    ],
+    ids=["byte-invalido", "multibyte-truncado", "surrogate-id", "surrogate-juego", "surrogate-ts", "anidado", "entero"],
+)
+def test_una_linea_corrupta_no_aborta_la_migracion(tmp_path, corrupta):
+    path = tmp_path / "feedback.jsonl"
+    _bytes(path, _linea("a", "Hades").encode(), corrupta, _linea("b", "Hades").encode())
+    assert migrate_feedback(path) == (2, 1)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    "registro",
+    [
+        {"ts": "nico@mail.cl extra", "user_id": "a", "game": "Hades", "vote": 1},
+        {"ts": "", "user_id": "a", "game": "Hades", "vote": 1},
+        {"ts": "2026-10-30", "user_id": "a", "game": "persona@example.com", "vote": 1},
+        {"ts": "2026-10-30", "user_id": "a", "game": "Hades", "vote": True},
+        {"ts": "2026-10-30", "user_id": "a", "game": "Hades", "vote": 1.0},
+    ],
+    ids=["fecha-con-correo", "fecha-vacia", "juego-con-correo", "voto-booleano", "voto-decimal"],
+)
+def test_migracion_omite_datos_invalidos_sin_guardarlos(tmp_path, registro):
+    path = tmp_path / "feedback.jsonl"
+    _archivo(path, [json.dumps(registro)])
+    assert migrate_feedback(path) == (0, 1)
+    assert _votos() == []
+
+
+def test_migracion_guarda_el_titulo_canonico(tmp_path):
+    path = tmp_path / "feedback.jsonl"
+    _archivo(path, [_linea("a", "hades"), _linea("a", "  HADES ", vote=-1)])
+    assert migrate_feedback(path) == (2, 0)
+    (fila,) = _votos()
+    assert fila["game"] == "Hades" and fila["vote"] == -1
