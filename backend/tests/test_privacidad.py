@@ -116,3 +116,62 @@ def test_si_la_migracion_falla_no_borra_el_archivo(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError):
         migrate_feedback(path)
     assert path.exists()
+
+
+def test_variantes_del_titulo_son_un_solo_voto(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    game = _juego()
+    for variante in (game, game.upper(), f"  {game.lower()} "):
+        assert client.post("/feedback", headers=headers, json={"game": variante, "vote": 1}).status_code == 201
+    (fila,) = _votos()
+    assert fila["game"] == game
+
+
+def _bytes(path, *lineas: bytes) -> None:
+    path.write_bytes(b"\n".join(lineas) + b"\n")
+
+
+@pytest.mark.parametrize(
+    "corrupta",
+    [
+        b"caf\xe9",
+        '{"user_id":"a","game":"Hades","vote":1,"ts":"2026-10-30"}'.encode()[:-2] + "é".encode()[:1],
+        b'{"user_id":"\\ud800","game":"Hades","vote":1,"ts":"2026-10-30"}',
+        b'{"user_id":"a","game":"\\ud800","vote":1,"ts":"2026-10-30"}',
+        b'{"user_id":"a","game":"Hades","vote":1,"ts":"\\ud800"}',
+        b"[" * 200_000,
+        b"1" * 5000,
+    ],
+    ids=["byte-invalido", "multibyte-truncado", "surrogate-id", "surrogate-juego", "surrogate-ts", "anidado", "entero"],
+)
+def test_una_linea_corrupta_no_aborta_la_migracion(tmp_path, corrupta):
+    path = tmp_path / "feedback.jsonl"
+    _bytes(path, _linea("a", "Hades").encode(), corrupta, _linea("b", "Hades").encode())
+    assert migrate_feedback(path) == (2, 1)
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    "registro",
+    [
+        {"ts": "nico@mail.cl extra", "user_id": "a", "game": "Hades", "vote": 1},
+        {"ts": "", "user_id": "a", "game": "Hades", "vote": 1},
+        {"ts": "2026-10-30", "user_id": "a", "game": "persona@example.com", "vote": 1},
+        {"ts": "2026-10-30", "user_id": "a", "game": "Hades", "vote": True},
+        {"ts": "2026-10-30", "user_id": "a", "game": "Hades", "vote": 1.0},
+    ],
+    ids=["fecha-con-correo", "fecha-vacia", "juego-con-correo", "voto-booleano", "voto-decimal"],
+)
+def test_migracion_omite_datos_invalidos_sin_guardarlos(tmp_path, registro):
+    path = tmp_path / "feedback.jsonl"
+    _archivo(path, [json.dumps(registro)])
+    assert migrate_feedback(path) == (0, 1)
+    assert _votos() == []
+
+
+def test_migracion_guarda_el_titulo_canonico(tmp_path):
+    path = tmp_path / "feedback.jsonl"
+    _archivo(path, [_linea("a", "hades"), _linea("a", "  HADES ", vote=-1)])
+    assert migrate_feedback(path) == (2, 0)
+    (fila,) = _votos()
+    assert fila["game"] == "Hades" and fila["vote"] == -1

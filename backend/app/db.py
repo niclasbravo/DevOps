@@ -8,6 +8,8 @@ quedan las reglas que la base sí puede imponer (valores válidos, unicidad y au
 import datetime as dt
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
@@ -103,6 +105,21 @@ def connect() -> sqlite3.Connection:
     if is_new:
         _create_schema(conn)
     return conn
+
+
+@contextmanager
+def write_transaction() -> Iterator[sqlite3.Connection]:
+    """Toma el bloqueo de escritura antes de leer: lo que se comprueba adentro no cambia hasta el commit."""
+    conn = connect()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        yield conn
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db() -> None:

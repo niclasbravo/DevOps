@@ -10,11 +10,13 @@ from pydantic import BaseModel, ConfigDict
 from app.audit import record
 from app.auth import is_last_admin, require_permission
 from app.crypto import decrypt_email
-from app.db import connect
+from app.db import connect, write_transaction
 from app.model import get_model
 from app.recommender import active_recommender
 
 router = APIRouter(prefix="/admin", tags=["administración"])
+
+NO_ADMINS = "No se puede dejar el sistema sin administradores"
 
 
 class RoleUpdate(BaseModel):
@@ -34,6 +36,11 @@ def _target_or_404(conn: sqlite3.Connection, account_id: str) -> sqlite3.Row:
     if target is None:
         raise HTTPException(status_code=404, detail="Cuenta no encontrada")
     return target
+
+
+def _audit_change(conn: sqlite3.Connection, blocked: bool, actor_id: str, target_id: str) -> None:
+    outcome = "denegado" if blocked else "permitido"
+    record("accounts:manage", outcome, actor_id=actor_id, target_id=target_id, conn=conn)
 
 
 @router.get("/model")
@@ -66,12 +73,17 @@ def update_role(
     if account_id == admin["id"]:
         record("accounts:manage", "denegado", actor_id=admin["id"], target_id=account_id)
         raise HTTPException(status_code=403, detail="No puedes cambiar tu propio rol")
-    with closing(connect()) as conn, conn:
+    with write_transaction() as conn:
         _target_or_404(conn, account_id)
-        conn.execute(
-            "UPDATE accounts SET role_id = (SELECT id FROM roles WHERE name = ?) WHERE id = ?", (req.role, account_id)
-        )
-    record("accounts:manage", "permitido", actor_id=admin["id"], target_id=account_id)
+        blocked = req.role != "admin" and is_last_admin(conn, account_id)
+        _audit_change(conn, blocked, admin["id"], account_id)
+        if not blocked:
+            conn.execute(
+                "UPDATE accounts SET role_id = (SELECT id FROM roles WHERE name = ?) WHERE id = ?",
+                (req.role, account_id),
+            )
+    if blocked:
+        raise HTTPException(status_code=409, detail=NO_ADMINS)
     return {"status": "ok"}
 
 
@@ -79,13 +91,14 @@ def update_role(
 def update_status(
     account_id: str, req: StatusUpdate, admin: sqlite3.Row = Depends(require_permission("accounts:manage"))
 ) -> dict:
-    if not req.is_active and is_last_admin(account_id):
-        record("accounts:manage", "denegado", actor_id=admin["id"], target_id=account_id)
-        raise HTTPException(status_code=409, detail="No se puede dejar el sistema sin administradores")
-    with closing(connect()) as conn, conn:
+    with write_transaction() as conn:
         _target_or_404(conn, account_id)
-        conn.execute("UPDATE accounts SET is_active = ? WHERE id = ?", (int(req.is_active), account_id))
-    record("accounts:manage", "permitido", actor_id=admin["id"], target_id=account_id)
+        blocked = not req.is_active and is_last_admin(conn, account_id)
+        _audit_change(conn, blocked, admin["id"], account_id)
+        if not blocked:
+            conn.execute("UPDATE accounts SET is_active = ? WHERE id = ?", (int(req.is_active), account_id))
+    if blocked:
+        raise HTTPException(status_code=409, detail=NO_ADMINS)
     return {"status": "ok"}
 
 
