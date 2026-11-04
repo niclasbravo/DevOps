@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.auth import router as auth_router
 from app.catalog import CATALOG, find_game
 from app.crypto import MissingKeyError, pseudonymize
 from app.db import init_db, save_vote
@@ -29,6 +30,8 @@ app = FastAPI(title="GameMatch", description="Recomendador de videojuegos indie"
 
 # Últimas latencias de /recommendations (ms), para medir el p95 en producción.
 _latencies: deque[float] = deque(maxlen=1000)
+
+app.include_router(auth_router)
 
 INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 
