@@ -1,4 +1,4 @@
-"""Registro, inicio de sesión y tokens."""
+"""Registro, inicio de sesión, tokens y autorización por permisos."""
 
 import datetime as dt
 import sqlite3
@@ -6,9 +6,11 @@ import uuid
 from contextlib import closing
 
 import jwt
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.audit import record
 from app.crypto import encrypt_email, get_key, hash_password, needs_rehash, verify_password
 from app.db import connect
 
@@ -27,6 +29,7 @@ INVALID_CREDENTIALS = "Credenciales inválidas"
 _DECOY_HASH = hash_password("cuenta-inexistente")
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+_bearer = HTTPBearer(auto_error=False)  # sin token debe responder 401, no el 403 por defecto
 
 
 class RegisterRequest(BaseModel):
@@ -104,6 +107,57 @@ def _authenticate(alias: str, password: str) -> str | None:
             (new_hash, account["id"]),
         )
         return account["id"]
+
+
+def current_account(credentials: HTTPAuthorizationCredentials | None) -> sqlite3.Row | None:
+    """La cuenta activa del token. Se lee de la base en cada petición: un cambio de rol rige de inmediato."""
+    if credentials is None:
+        return None
+    try:
+        account_id = decode_token(credentials.credentials)
+    except jwt.InvalidTokenError:
+        return None
+    with closing(connect()) as conn:
+        return conn.execute(
+            """SELECT a.*, r.name AS role FROM accounts a JOIN roles r ON r.id = a.role_id
+               WHERE a.id = ? AND a.is_active = 1""",
+            (account_id,),
+        ).fetchone()
+
+
+def _has_permission(account: sqlite3.Row, code: str) -> bool:
+    with closing(connect()) as conn:
+        row = conn.execute(
+            """SELECT 1 FROM role_permissions rp JOIN permissions p ON p.id = rp.permission_id
+               WHERE rp.role_id = ? AND p.code = ?""",
+            (account["role_id"], code),
+        ).fetchone()
+    return row is not None
+
+
+def require_permission(code: str):
+    """Dependencia de FastAPI: deja pasar solo a cuentas con el permiso y audita cada rechazo."""
+
+    def dependency(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> sqlite3.Row:
+        account = current_account(credentials)
+        if account is None:
+            record(code, "denegado")
+            raise HTTPException(status_code=401, detail="Sesión requerida", headers={"WWW-Authenticate": "Bearer"})
+        if not _has_permission(account, code):
+            record(code, "denegado", actor_id=account["id"])
+            raise HTTPException(status_code=403, detail="Permiso denegado")
+        return account
+
+    return dependency
+
+
+def is_last_admin(account_id: str) -> bool:
+    with closing(connect()) as conn:
+        admins = conn.execute(
+            """SELECT a.id FROM accounts a JOIN roles r ON r.id = a.role_id
+               WHERE r.name = 'admin' AND a.is_active = 1"""
+        ).fetchall()
+    return [row["id"] for row in admins] == [account_id]
 
 
 @router.post("/register", status_code=201)

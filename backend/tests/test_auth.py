@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.auth import create_token, decode_token
-from app.crypto import decrypt_email, get_key
+from app.crypto import decrypt_email, get_key, pseudonymize
 from app.db import connect
 from app.main import app
 
@@ -160,3 +160,136 @@ def test_token_sin_firma_es_invalido():
     token = jwt.encode({"sub": "abc", "exp": 9_999_999_999}, "", algorithm="none")
     with pytest.raises(jwt.InvalidTokenError):
         decode_token(token)
+
+
+def _set(sql: str, *args) -> None:
+    with closing(connect()) as conn, conn:
+        conn.execute(sql, args)
+
+
+def _auditoria() -> list:
+    with closing(connect()) as conn:
+        return conn.execute("SELECT * FROM audit_log ORDER BY id").fetchall()
+
+
+def _juego() -> str:
+    return client.get("/games", params={"limit": 1}).json()[0]["title"]
+
+
+def test_me_devuelve_solo_datos_minimos(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    body = client.get("/me", headers=headers).json()
+    assert set(body) == {"alias", "role", "created_on", "has_email"}
+    assert body["role"] == "usuario" and body["has_email"] is False
+
+
+@pytest.mark.parametrize("cabecera", [None, "Bearer token-falso", "Basic abc"])
+def test_me_sin_token_valido_da_401(cabecera):
+    headers = {"Authorization": cabecera} if cabecera else {}
+    assert client.get("/me", headers=headers).status_code == 401
+
+
+def test_token_de_cuenta_borrada_da_401(nueva_cuenta):
+    account_id, headers = nueva_cuenta()
+    _set("DELETE FROM accounts WHERE id = ?", account_id)
+    assert client.get("/me", headers=headers).status_code == 401
+
+
+def test_token_de_cuenta_suspendida_da_401(nueva_cuenta):
+    account_id, headers = nueva_cuenta()
+    _set("UPDATE accounts SET is_active = 0 WHERE id = ?", account_id)
+    assert client.get("/me", headers=headers).status_code == 401
+
+
+def test_cambio_de_rol_rige_de_inmediato(nueva_cuenta):
+    account_id, headers = nueva_cuenta()
+    juego = {"game": _juego(), "vote": 1}
+    assert client.post("/feedback", headers=headers, json=juego).status_code == 201
+    _set("UPDATE accounts SET role_id = (SELECT id FROM roles WHERE name = 'analista') WHERE id = ?", account_id)
+    assert client.post("/feedback", headers=headers, json=juego).status_code == 403
+
+
+def test_feedback_sin_token_da_401():
+    assert client.post("/feedback", json={"game": _juego(), "vote": 1}).status_code == 401
+
+
+def test_feedback_ya_no_acepta_user_id(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    cuerpo = {"user_id": "a", "game": "Hades", "vote": 1}
+    assert client.post("/feedback", headers=headers, json=cuerpo).status_code == 422
+
+
+def test_usuario_solo_ve_sus_votos(nueva_cuenta):
+    _, uno = nueva_cuenta()
+    _, otro = nueva_cuenta()
+    game = _juego()
+    client.post("/feedback", headers=uno, json={"game": game, "vote": 1})
+    assert client.get("/me/feedback", headers=otro).json() == []
+    (voto,) = client.get("/me/feedback", headers=uno).json()
+    assert set(voto) == {"game", "vote", "voted_on"} and voto["game"] == game
+
+
+def test_patch_me_exige_contrasena_actual(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    cuerpo = {"current_password": "otra-clave-larga-2", "new_password": "clave-nueva-larga-3"}
+    assert client.patch("/me", headers=headers, json=cuerpo).status_code == 403
+
+
+def test_patch_me_cambia_la_contrasena(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    cuerpo = {"current_password": CLAVE, "new_password": "clave-nueva-larga-3"}
+    assert client.patch("/me", headers=headers, json=cuerpo).status_code == 200
+    alias = client.get("/me", headers=headers).json()["alias"]
+    assert _login(alias, CLAVE).status_code == 401
+    assert _login(alias, "clave-nueva-larga-3").status_code == 200
+
+
+def test_patch_me_guarda_y_borra_el_correo(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    client.patch("/me", headers=headers, json={"current_password": CLAVE, "email": "persona@example.com"})
+    assert client.get("/me", headers=headers).json()["has_email"] is True
+    client.patch("/me", headers=headers, json={"current_password": CLAVE, "email": None})
+    assert client.get("/me", headers=headers).json()["has_email"] is False
+
+
+def test_patch_me_no_permite_cambiar_el_rol(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    assert client.patch("/me", headers=headers, json={"current_password": CLAVE, "role": "admin"}).status_code == 422
+
+
+def test_borrar_cuenta_conserva_votos_sin_vinculo(nueva_cuenta):
+    account_id, headers = nueva_cuenta()
+    client.post("/feedback", headers=headers, json={"game": _juego(), "vote": 1})
+    assert client.delete("/me", headers=headers).status_code == 204
+    with closing(connect()) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM accounts WHERE id = ?", (account_id,)).fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 1
+
+
+def test_el_ultimo_admin_no_puede_borrarse(nueva_cuenta):
+    _, headers = nueva_cuenta("admin")
+    assert client.delete("/me", headers=headers).status_code == 409
+
+
+def test_un_admin_puede_borrarse_si_queda_otro(nueva_cuenta):
+    _, headers = nueva_cuenta("admin")
+    nueva_cuenta("admin")
+    assert client.delete("/me", headers=headers).status_code == 204
+
+
+def test_denegacion_queda_auditada_con_seudonimo(nueva_cuenta):
+    account_id, headers = nueva_cuenta("analista")
+    assert client.post("/feedback", headers=headers, json={"game": "Hades", "vote": 1}).status_code == 403
+    (fila,) = _auditoria()
+    assert fila["outcome"] == "denegado" and fila["action"] == "feedback:write"
+    assert fila["actor_pseudonym"] == pseudonymize(account_id)
+
+
+def test_acceso_sin_sesion_queda_auditado_sin_actor():
+    client.get("/me")
+    (fila,) = _auditoria()
+    assert fila["outcome"] == "denegado" and fila["actor_pseudonym"] is None
+
+
+def test_stats_no_expone_datos_del_modelo():
+    assert "model" not in client.get("/stats").json()

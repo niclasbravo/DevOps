@@ -63,7 +63,7 @@ def test_stats_informa_recomendador_y_latencia():
     assert body["latency_ms"]["p95"] is not None
 
 
-def test_feedback_rechaza_juego_desconocido_y_voto_invalido():
-    assert client.post("/feedback", json={"user_id": "a", "game": "No Existe 9000", "vote": 1}).status_code == 404
-    assert client.post("/feedback", json={"user_id": "a", "game": "Hades", "vote": 5}).status_code == 422
-    assert client.post("/feedback", json={"user_id": "a b@c", "game": "Hades", "vote": 1}).status_code == 422
+def test_feedback_rechaza_juego_desconocido_y_voto_invalido(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    assert client.post("/feedback", headers=headers, json={"game": "No Existe 9000", "vote": 1}).status_code == 404
+    assert client.post("/feedback", headers=headers, json={"game": "Hades", "vote": 5}).status_code == 422

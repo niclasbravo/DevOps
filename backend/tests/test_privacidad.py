@@ -24,44 +24,47 @@ def _votos() -> list:
         return conn.execute("SELECT pseudonym, game, vote, voted_on FROM feedback ORDER BY id").fetchall()
 
 
-def test_voto_guarda_seudonimo_y_solo_fecha():
-    game = _juego()
-    assert client.post("/feedback", json={"user_id": "anon-123", "game": game, "vote": 1}).status_code == 201
+def test_voto_guarda_seudonimo_y_solo_fecha(nueva_cuenta):
+    account_id, headers = nueva_cuenta()
+    assert client.post("/feedback", headers=headers, json={"game": _juego(), "vote": 1}).status_code == 201
     (fila,) = _votos()
-    assert fila["pseudonym"] == pseudonymize("anon-123")
-    assert "anon-123" not in fila["pseudonym"]
+    assert fila["pseudonym"] == pseudonymize(account_id)
+    assert account_id not in fila["pseudonym"]
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", fila["voted_on"])
 
 
-def test_voto_no_crea_el_archivo_antiguo(tmp_path, monkeypatch):
+def test_voto_no_crea_el_archivo_antiguo(tmp_path, monkeypatch, nueva_cuenta):
     monkeypatch.chdir(tmp_path)
-    client.post("/feedback", json={"user_id": "a", "game": _juego(), "vote": 1})
+    _, headers = nueva_cuenta()
+    client.post("/feedback", headers=headers, json={"game": _juego(), "vote": 1})
     assert not (tmp_path / "data" / "feedback.jsonl").exists()
 
 
-@pytest.mark.parametrize(
-    "ruta,cuerpo",
-    [
-        ("/feedback", {"user_id": "a", "game": "Hades", "vote": 1, "birthdate": "2000-01-01"}),
-        ("/recommendations", {"tags": ["roguelike"], "email": "persona@example.com"}),
-    ],
-)
-def test_campo_extra_se_rechaza(ruta, cuerpo):
-    assert client.post(ruta, json=cuerpo).status_code == 422
+def test_campo_extra_en_feedback_se_rechaza(nueva_cuenta):
+    _, headers = nueva_cuenta()
+    cuerpo = {"game": "Hades", "vote": 1, "birthdate": "2000-01-01"}
+    assert client.post("/feedback", headers=headers, json=cuerpo).status_code == 422
 
 
-def test_volver_a_votar_actualiza_el_voto():
+def test_campo_extra_en_recomendaciones_se_rechaza():
+    cuerpo = {"tags": ["roguelike"], "email": "persona@example.com"}
+    assert client.post("/recommendations", json=cuerpo).status_code == 422
+
+
+def test_volver_a_votar_actualiza_el_voto(nueva_cuenta):
+    _, headers = nueva_cuenta()
     game = _juego()
-    assert client.post("/feedback", json={"user_id": "a", "game": game, "vote": 1}).status_code == 201
-    assert client.post("/feedback", json={"user_id": "a", "game": game, "vote": -1}).status_code == 201
+    assert client.post("/feedback", headers=headers, json={"game": game, "vote": 1}).status_code == 201
+    assert client.post("/feedback", headers=headers, json={"game": game, "vote": -1}).status_code == 201
     (fila,) = _votos()
     assert fila["vote"] == -1
 
 
-def test_sin_clave_feedback_responde_503_y_lo_publico_funciona(monkeypatch):
+def test_sin_clave_feedback_responde_503_y_lo_publico_funciona(monkeypatch, nueva_cuenta):
+    _, headers = nueva_cuenta()
     game = _juego()
     monkeypatch.delenv("GM_PSEUDONYM_KEY")
-    resp = client.post("/feedback", json={"user_id": "a", "game": game, "vote": 1})
+    resp = client.post("/feedback", headers=headers, json={"game": game, "vote": 1})
     assert resp.status_code == 503
     assert "GM_PSEUDONYM_KEY" not in resp.text
     assert client.get("/health").status_code == 200
