@@ -21,6 +21,7 @@ from app.db import init_db, save_vote
 from app.me import router as me_router
 from app.model import get_model
 from app.recommender import active_recommender, recommend
+from app.reports import router as reports_router
 
 
 @asynccontextmanager
@@ -38,6 +39,7 @@ _latencies: deque[float] = deque(maxlen=1000)
 app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(admin_router)
+app.include_router(reports_router)
 
 INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 
