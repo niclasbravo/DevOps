@@ -5,6 +5,7 @@ quedan las reglas que la base sí puede imponer (valores válidos, unicidad y au
 `feedback` no tiene clave foránea hacia `accounts` a propósito: sin la clave del HMAC no se pueden unir.
 """
 
+import datetime as dt
 import os
 import sqlite3
 from pathlib import Path
@@ -108,5 +109,24 @@ def init_db() -> None:
     conn = connect()
     try:
         _create_schema(conn)
+    finally:
+        conn.close()
+
+
+def upsert_vote(conn: sqlite3.Connection, pseudonym: str, game: str, vote: int, voted_on: str) -> None:
+    """Un voto por persona y juego: votar de nuevo reemplaza el anterior."""
+    conn.execute(
+        """INSERT INTO feedback (pseudonym, game, vote, voted_on) VALUES (?, ?, ?, ?)
+           ON CONFLICT (pseudonym, game) DO UPDATE SET vote = excluded.vote, voted_on = excluded.voted_on""",
+        (pseudonym, game, vote, voted_on),
+    )
+
+
+def save_vote(pseudonym: str, game: str, vote: int) -> None:
+    today = dt.datetime.now(dt.timezone.utc).date().isoformat()  # solo la fecha: la hora exacta no se necesita
+    conn = connect()
+    try:
+        with conn:
+            upsert_vote(conn, pseudonym, game, vote, today)
     finally:
         conn.close()

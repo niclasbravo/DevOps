@@ -15,11 +15,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/ ./app/
 COPY models/ ./models/
 
-# 3) No correr como root dentro del contenedor; data/ es el único directorio escribible (votos)
+# 3) No correr como root dentro del contenedor; data/ es el único directorio escribible (base de datos)
 RUN useradd --create-home --uid 10001 gamematch \
     && mkdir -p /app/data && chown gamematch /app/data
 USER gamematch
-ENV FEEDBACK_PATH=/app/data/feedback.jsonl
+ENV GM_DB_PATH=/app/data/gamematch.db
 
 EXPOSE 8000
 
