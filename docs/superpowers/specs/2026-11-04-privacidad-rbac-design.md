@@ -8,10 +8,10 @@ Reducir los datos personales que GameMatch guarda y garantizar que cada persona 
 implementándolo en el código y demostrándolo con pruebas.
 
 **Punto de partida real.** GameMatch no tiene base de datos, cuentas ni autenticación. Este documento no inventa un
-esquema anterior: el "esquema original" es lo que existe en `main` (commit `c830e0f`). Los campos que nunca existieron
+esquema anterior: el "esquema original" es lo que existe en `main` (commit `080b430`, que incluye la página web del PR #13). Los campos que nunca existieron
 y se evaluaron para el diseño se marcan como *evaluado*, nunca como eliminados.
 
-**Fuera de alcance:** frontend, envío de correos, migrar a Postgres, Kubernetes, y el fallo del workflow
+**Fuera de alcance:** un frontend nuevo (solo se adapta la página existente), envío de correos, migrar a Postgres, Kubernetes, y el fallo del workflow
 `entrenamiento.yml` del 2026-11-01 (no afecta a esta actividad).
 
 ## 2. Parte 1: esquema de datos
@@ -25,6 +25,7 @@ y se evaluaron para el diseño se marcan como *evaluado*, nunca como eliminados.
 | `models/gamematch.joblib` | Vectores y datos públicos de IGDB | Sin datos personales. |
 | `models/model_meta.json` | `commit`, `sha256`, `trained_at`, `data_file`, métricas | Sin datos personales; información interna. |
 | `_latencies` (memoria) | Latencias en ms | Sin datos personales. |
+| `localStorage` del navegador | `gamematch-uid` | Id persistente generado con `Math.random` en `backend/app/static/index.html`. Se envía como `user_id` en cada voto. |
 
 Problemas: todos los endpoints son públicos, cualquiera puede escribir votos con cualquier `user_id`, `/stats` expone
 datos internos del modelo, y el código llama "anónimo" a un identificador estable, que en realidad es un seudónimo.
@@ -47,7 +48,7 @@ CREATE TABLE role_permissions (
 );
 CREATE TABLE accounts (
   id TEXT PRIMARY KEY,                    -- UUID aleatorio, sin significado
-  alias TEXT NOT NULL UNIQUE,             -- no tiene que ser el nombre real
+  alias TEXT NOT NULL UNIQUE COLLATE NOCASE, -- no tiene que ser el nombre real
   password_hash TEXT NOT NULL,            -- Argon2id
   email_encrypted BLOB,                   -- opcional; cifrado con Fernet
   role_id INTEGER NOT NULL REFERENCES roles(id),
@@ -87,6 +88,7 @@ cuentas sin la clave del HMAC.
 | Tabla y campo | Decisión | Justificación y riesgo de conservarlo |
 |---|---|---|
 | `feedback.jsonl`: `user_id` | Reducir (se reemplaza por `feedback.pseudonym`) | El voto solo necesita evitar duplicados. Un id estable elegido por el cliente puede ser un nombre o correo real. |
+| `localStorage`: `gamematch-uid` | Eliminar | Con cuentas ya no se necesita. Es un identificador persistente del navegador que permite seguir a una persona entre visitas, y `Math.random` no es criptográficamente seguro. |
 | `feedback.jsonl`: `ts` | Reducir a fecha (`voted_on`) | Basta el día para analizar tendencias. La hora exacta facilita cruzar la actividad con otras fuentes. |
 | `feedback.jsonl`: `game`, `vote` | Mantener | Son el propósito del voto. |
 | `CATALOG`, modelo | Mantener | Sin datos personales. |
@@ -162,7 +164,7 @@ acepta un campo de rol en ese endpoint.
 
 | Permiso | Endpoint | usuario | analista | admin |
 |---|---|---|---|---|
-| Público | `GET /health`, `/games`, `/stats` (reducido); `POST /recommendations`, `/auth/register`, `/auth/login` | Sí | Sí | Sí |
+| Público | `GET /`, `/health`, `/games`, `/stats` (reducido); `POST /recommendations`, `/auth/register`, `/auth/login` | Sí | Sí | Sí |
 | `feedback:write` | `POST /feedback` | Sí | No | No |
 | `me:read` | `GET /me`, `GET /me/feedback` | Sí | Sí | Sí |
 | `me:update` | `PATCH /me` (contraseña y correo propios; exige la contraseña actual) | Sí | Sí | Sí |
@@ -220,7 +222,7 @@ texto. Dependencias nuevas: `argon2-cffi`, `pyjwt`, `cryptography`. SQLite va co
 
 ### 5.2 Contraseñas, sesiones y claves
 
-- **Contraseñas:** Argon2id, mínimo 12 caracteres. Se rehashean al iniciar sesión si cambian los parámetros.
+- **Contraseñas:** Argon2id, de 12 a 128 caracteres. Se rehashean al iniciar sesión si cambian los parámetros.
 - **Login:** el mismo mensaje y el mismo costo de verificación exista o no la cuenta (hash señuelo), para no revelar
   qué alias existen. Bloqueo de 15 minutos tras 5 intentos fallidos.
 - **Tokens:** JWT HS256 con caducidad de 30 minutos y `sub` igual a `account.id`.
@@ -245,6 +247,18 @@ texto. Dependencias nuevas: `argon2-cffi`, `pyjwt`, `cryptography`. SQLite va co
 `GM_DB_PATH=/app/data/gamematch.db` reemplaza a `FEEDBACK_PATH`. Se documenta el uso de un volumen en `/app/data`:
 sin él, los datos se pierden al borrar el contenedor. La imagen sigue corriendo sin root y no incluye claves.
 
+### 5.5 Página web
+
+`backend/app/static/index.html` (PR #13) vota con un `user_id` guardado en `localStorage`, lo que es incompatible con
+este diseño. Se adapta así:
+
+- Se elimina `gamematch-uid` y el campo `user_id` de la petición.
+- Recomendar sigue siendo público. Votar exige iniciar sesión, y la página agrega un formulario de registro y login.
+- El token se guarda solo en una variable de JavaScript, nunca en `localStorage`, `sessionStorage` ni cookies. Recargar
+  la página cierra la sesión: se acepta esa incomodidad a cambio de que el token no persista en el navegador.
+- Si `/feedback` responde 401, la página olvida el token y vuelve a pedir el login.
+- El contenido dinámico se sigue escribiendo con `textContent`, sin `innerHTML`.
+
 ## 6. Pruebas
 
 Cada celda de la matriz 4.3 tiene al menos una prueba. `tests/test_rbac.py` se parametriza desde una tabla de
@@ -259,6 +273,7 @@ Cada celda de la matriz 4.3 tiene al menos una prueba. `tests/test_rbac.py` se p
 | `test_logs_errores.py` | Sin contraseña en 422, sin datos personales en logs, 500 genérico |
 | `test_db.py` | Triggers rechazan `UPDATE` y `DELETE` en `audit_log`; migración de JSONL; intento de inyección SQL |
 | `test_claves.py` | Sin claves responde 503 y lo público sigue funcionando |
+| `test_pagina.py` | La página no usa `localStorage` ni `user_id`, envía el token y no usa `innerHTML` |
 
 Las pruebas existentes de `/feedback` y `/stats` se actualizan al nuevo contrato. El job `Build y pruebas (pytest)` ya
 corre todo y sus resultados son la evidencia para el informe.
@@ -271,7 +286,7 @@ Cada etapa: issue, rama desde `main`, PR con la plantilla, CI en verde y aprobac
 |---|---|---|
 | 1 | `docs/diseno-privacidad-rbac` | Este documento |
 | 2 | `feature/bd-minimizacion` | `db.py`, `crypto.py`, `feedback` en SQLite con seudónimo, migración, validaciones |
-| 3 | `feature/auth-rbac` | `auth.py`, `audit.py`, `cli.py`, permisos en endpoints, `/stats` reducido |
+| 3 | `feature/auth-rbac` | `auth.py`, `audit.py`, `cli.py`, permisos en endpoints, `/stats` reducido, login en la página |
 | 4 | `feature/anonimizacion-logs` | `reports.py`, `logging_safe.py`, `errors.py` |
 | 5 | `docs/informe-actividad` | Evidencias, README e informe para Canvas |
 
@@ -292,5 +307,7 @@ por la identidad del token.
   la cuenta.
 - **Sin retención automática.** `audit_log` crece sin límite: los triggers impiden purgar, y el plazo y mecanismo de
   retención quedan por definir.
+- **Token en memoria del navegador.** Evita que persista, pero un script malicioso en la página podría leerlo mientras
+  la sesión está abierta. Conviene agregar una política CSP en una entrega futura.
 - **Recuperación de cuenta manual.** No hay envío de correos. Si esta función no se usa, lo coherente con la
   minimización es eliminar el campo de correo.
