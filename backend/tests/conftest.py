@@ -1,5 +1,7 @@
 """Datos sintéticos compartidos por las pruebas del modelo."""
 
+import secrets
+
 import pandas as pd
 import pytest
 
@@ -50,6 +52,14 @@ def make_raw_games() -> pd.DataFrame:
             )
         gid += PER_GROUP
     return pd.DataFrame(rows)
+
+
+@pytest.fixture(autouse=True)
+def entorno_seguro(monkeypatch, tmp_path):
+    """Cada prueba corre con claves nuevas y una base propia: nunca con datos ni secretos reales."""
+    for name in ("GM_PSEUDONYM_KEY", "GM_EMAIL_KEY", "GM_JWT_SECRET"):
+        monkeypatch.setenv(name, secrets.token_urlsafe(48))
+    monkeypatch.setenv("GM_DB_PATH", str(tmp_path / "gamematch.db"))
 
 
 @pytest.fixture

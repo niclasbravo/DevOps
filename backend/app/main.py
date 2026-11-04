@@ -1,9 +1,5 @@
 """API de GameMatch."""
 
-import datetime as dt
-import json
-import os
-import threading
 import time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -12,10 +8,12 @@ from typing import Literal
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.catalog import CATALOG, find_game
+from app.crypto import MissingKeyError, pseudonymize
+from app.db import init_db, save_vote
 from app.model import get_model
 from app.recommender import active_recommender, recommend
 
@@ -23,6 +21,7 @@ from app.recommender import active_recommender, recommend
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     get_model()  # carga (y verifica) el modelo al arrancar, no en la primera consulta
+    init_db()
     yield
 
 
@@ -30,12 +29,13 @@ app = FastAPI(title="GameMatch", description="Recomendador de videojuegos indie"
 
 # Últimas latencias de /recommendations (ms), para medir el p95 en producción.
 _latencies: deque[float] = deque(maxlen=1000)
-_feedback_lock = threading.Lock()
 
 INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 
 
 class RecommendationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")  # un campo no previsto se rechaza: no llega a procesarse
+
     liked_games: list[str] = Field(default_factory=list, examples=[["Hollow Knight"]])
     tags: list[str] = Field(default_factory=list, examples=[["roguelike"]])
     limit: int = Field(default=5, ge=1, le=20)
@@ -47,10 +47,18 @@ class Recommendation(BaseModel):
 
 
 class Feedback(BaseModel):
-    # Solo un id anónimo, el juego y el voto: nada que identifique a la persona.
+    # El id se guarda seudonimizado, nunca tal como llega.
+    model_config = ConfigDict(extra="forbid")
+
     user_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$", examples=["a1b2c3"])
     game: str = Field(min_length=1, max_length=200, examples=["Hades"])
     vote: Literal[1, -1]
+
+
+@app.exception_handler(MissingKeyError)
+async def missing_key(_: Request, __: MissingKeyError) -> JSONResponse:
+    # Sin claves no se guarda nada; la respuesta no dice cuál falta.
+    return JSONResponse(status_code=503, content={"detail": "Servicio no disponible por falta de configuración"})
 
 
 @app.middleware("http")
@@ -97,12 +105,7 @@ def post_feedback(fb: Feedback) -> dict:
     known = model.find(fb.game) is not None if model is not None else find_game(fb.game) is not None
     if not known:
         raise HTTPException(status_code=404, detail=f"Juego desconocido: {fb.game}")
-    path = Path(os.environ.get("FEEDBACK_PATH", "data/feedback.jsonl"))
-    record = {"ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **fb.model_dump()}
-    with _feedback_lock:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    save_vote(pseudonymize(fb.user_id), fb.game, fb.vote)
     return {"status": "ok"}
 
 
