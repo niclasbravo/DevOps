@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.admin import router as admin_router
 from app.auth import require_permission
 from app.auth import router as auth_router
 from app.catalog import CATALOG, find_game
@@ -36,6 +37,7 @@ _latencies: deque[float] = deque(maxlen=1000)
 
 app.include_router(auth_router)
 app.include_router(me_router)
+app.include_router(admin_router)
 
 INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 

@@ -1,10 +1,12 @@
 """Tareas administrativas de GameMatch: `python -m app.cli <comando>`."""
 
 import argparse
+import getpass
 import json
 import logging
 from pathlib import Path
 
+from app.auth import RegisterRequest, create_account
 from app.crypto import pseudonymize
 from app.db import connect, upsert_vote
 
@@ -50,14 +52,26 @@ def migrate_feedback(path: Path) -> tuple[int, int]:
     return migrated, skipped
 
 
+def create_admin(alias: str, password: str) -> str:
+    """Único camino para crear un administrador: la API solo crea cuentas `usuario`."""
+    valid = RegisterRequest(alias=alias, password=password)  # lanza ValueError si los datos no son válidos
+    return create_account(valid.alias, valid.password, role="admin")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     commands = parser.add_subparsers(dest="command", required=True)
     migrate = commands.add_parser("migrate-feedback", help="Migra data/feedback.jsonl a la base")
     migrate.add_argument("--path", type=Path, default=Path("data/feedback.jsonl"))
+    admin = commands.add_parser("create-admin", help="Crea una cuenta de administrador")
+    admin.add_argument("--alias", required=True)
     args = parser.parse_args()
-    migrated, skipped = migrate_feedback(args.path)
-    print(f"Migrados: {migrated}. Omitidos: {skipped}.")
+    if args.command == "create-admin":
+        create_admin(args.alias, getpass.getpass("Contraseña: "))  # nunca como argumento: quedaría en el historial
+        print("Administrador creado.")
+    else:
+        migrated, skipped = migrate_feedback(args.path)
+        print(f"Migrados: {migrated}. Omitidos: {skipped}.")
 
 
 if __name__ == "__main__":
