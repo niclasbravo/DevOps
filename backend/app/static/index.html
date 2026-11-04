@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GameMatch</title>
+  <style>
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --panel-2: #1f232c;
+      --border: #2c313c;
+      --text: #e8eaf0;
+      --muted: #9aa1b0;
+      --accent: #3ecf8e;
+      --accent-ink: #062b1b;
+      --danger: #ff6b6b;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    }
+    header, main, footer { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+    header { padding-top: 40px; }
+    h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; }
+    h1 span { color: var(--accent); }
+    .lead { color: var(--muted); margin: 4px 0 24px; }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .tabs { display: flex; gap: 4px; background: var(--panel-2); padding: 4px; border-radius: 10px; margin-bottom: 20px; }
+    .tabs button {
+      flex: 1; border: 0; background: transparent; color: var(--muted);
+      padding: 8px 12px; border-radius: 8px; font: inherit; cursor: pointer;
+    }
+    .tabs button[aria-selected="true"] { background: var(--panel); color: var(--text); box-shadow: 0 1px 0 var(--border); }
+
+    label { display: block; font-size: 0.875rem; color: var(--muted); margin-bottom: 6px; }
+    input[type="text"] {
+      width: 100%; padding: 10px 12px; margin-bottom: 10px;
+      background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; font: inherit;
+    }
+    input[type="text"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+    .chip {
+      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+      padding: 4px 10px; border-radius: 999px; font-size: 0.85rem; cursor: pointer;
+    }
+    .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+    .row label { margin: 0; }
+    select {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px; font: inherit;
+    }
+    .primary {
+      margin-left: auto; border: 0; border-radius: 8px; padding: 10px 20px;
+      background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer;
+    }
+    .primary:disabled { opacity: 0.6; cursor: wait; }
+
+    .status { min-height: 1.5em; margin: 16px 0 8px; color: var(--muted); }
+    .status.error { color: var(--danger); }
+
+    .results { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+    .card {
+      display: grid; grid-template-columns: 2rem 1fr auto; gap: 12px; align-items: center;
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;
+    }
+    .rank { color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
+    .title { font-weight: 600; overflow-wrap: anywhere; }
+    .bar { height: 6px; background: var(--panel-2); border-radius: 999px; margin-top: 6px; overflow: hidden; }
+    .bar > div { height: 100%; background: var(--accent); }
+    .score { font-size: 0.8rem; color: var(--muted); }
+    .votes { display: flex; gap: 6px; }
+    .votes button {
+      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
+      border-radius: 8px; padding: 6px 10px; cursor: pointer; font: inherit;
+    }
+    .votes button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+
+    footer { color: var(--muted); font-size: 0.8rem; padding-top: 32px; padding-bottom: 32px; }
+    footer a { color: inherit; }
+    [hidden] { display: none !important; }
+
+    @media (max-width: 520px) {
+      .card { grid-template-columns: 1fr auto; }
+      .rank { display: none; }
+      .primary { margin-left: 0; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Game<span>Match</span></h1>
+    <p class="lead">Descubre juegos indie parecidos a los que ya te gustan.</p>
+  </header>
+
+  <main>
+    <form class="panel" id="form">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" aria-selected="true" data-mode="games">Por juegos</button>
+        <button type="button" role="tab" aria-selected="false" data-mode="tags">Por géneros y temas</button>
+      </div>
+
+      <section id="mode-games">
+        <label for="game-1">Hasta 3 juegos que te gusten</label>
+        <input type="text" id="game-1" list="titles" placeholder="Ej: Hollow Knight" autocomplete="off">
+        <input type="text" id="game-2" list="titles" placeholder="Ej: Celeste" autocomplete="off">
+        <input type="text" id="game-3" list="titles" placeholder="Ej: Hades" autocomplete="off">
+        <datalist id="titles"></datalist>
+      </section>
+
+      <section id="mode-tags" hidden>
+        <label for="tags">Géneros, temas o mecánicas (separados por coma)</label>
+        <input type="text" id="tags" placeholder="Ej: roguelike, horror, puzzle" autocomplete="off">
+        <div class="chips" id="tag-chips"></div>
+      </section>
+
+      <div class="row">
+        <label for="limit">Resultados</label>
+        <select id="limit">
+          <option>5</option>
+          <option selected>10</option>
+          <option>20</option>
+        </select>
+        <button class="primary" type="submit" id="submit">Recomendar</button>
+      </div>
+    </form>
+
+    <p class="status" id="status" role="status"></p>
+    <ol class="results" id="results"></ol>
+  </main>
+
+  <footer>
+    <span id="engine">GameMatch</span> · Datos de juegos de IGDB ·
+    <a href="/docs">API</a>
+  </footer>
+
+  <template id="card-tpl">
+    <li class="card">
+      <span class="rank"></span>
+      <div>
+        <div class="title"></div>
+        <div class="bar"><div></div></div>
+        <span class="score"></span>
+      </div>
+      <div class="votes">
+        <button type="button" data-vote="1" aria-pressed="false" title="Me interesa">👍</button>
+        <button type="button" data-vote="-1" aria-pressed="false" title="No me interesa">👎</button>
+      </div>
+    </li>
+  </template>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let mode = "games";
+
+    // Id anónimo para /feedback; si el navegador no deja guardar, se usa uno por sesión.
+    function anonymousId() {
+      const fresh = () => Math.random().toString(36).slice(2, 12);
+      try {
+        let id = localStorage.getItem("gamematch-uid");
+        if (!id) {
+          id = fresh();
+          localStorage.setItem("gamematch-uid", id);
+        }
+        return id;
+      } catch {
+        return fresh();
+      }
+    }
+    const userId = anonymousId();
+
+    function setStatus(text, isError = false) {
+      $("status").textContent = text;
+      $("status").classList.toggle("error", isError);
+    }
+
+    // Pestañas: juegos o tags
+    document.querySelectorAll("[role=tab]").forEach((tab) => {
+      tab.addEventListener("click", () => {
+        mode = tab.dataset.mode;
+        document.querySelectorAll("[role=tab]").forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
+        $("mode-games").hidden = mode !== "games";
+        $("mode-tags").hidden = mode !== "tags";
+      });
+    });
+
+    // Catálogo para autocompletar títulos y sugerir los tags más comunes (/games pagina de a 500)
+    async function loadCatalog() {
+      const titles = [];
+      const tagCount = new Map();
+      for (let offset = 0; ; offset += 500) {
+        const resp = await fetch(`/games?limit=500&offset=${offset}`);
+        if (!resp.ok) break;
+        const page = await resp.json();
+        for (const game of page) {
+          titles.push(game.title);
+          for (const tag of game.tags) tagCount.set(tag, (tagCount.get(tag) || 0) + 1);
+        }
+        if (page.length < 500) break;
+      }
+      const list = $("titles");
+      for (const title of titles) {
+        const opt = document.createElement("option");
+        opt.value = title;
+        list.appendChild(opt);
+      }
+      const top = [...tagCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([t]) => t);
+      for (const tag of top) {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "chip";
+        chip.textContent = tag;
+        chip.setAttribute("aria-pressed", "false");
+        chip.addEventListener("click", () => toggleTag(tag, chip));
+        $("tag-chips").appendChild(chip);
+      }
+    }
+
+    function currentTags() {
+      return $("tags").value.split(",").map((t) => t.trim()).filter(Boolean);
+    }
+
+    function toggleTag(tag, chip) {
+      const tags = currentTags();
+      const i = tags.findIndex((t) => t.toLowerCase() === tag.toLowerCase());
+      if (i >= 0) tags.splice(i, 1);
+      else tags.push(tag);
+      $("tags").value = tags.join(", ");
+      chip.setAttribute("aria-pressed", String(i < 0));
+    }
+
+    async function loadEngine() {
+      try {
+        const stats = await (await fetch("/stats")).json();
+        const engine = stats.recommender === "ml" ? "modelo de ML" : "similitud de tags";
+        $("engine").textContent = `GameMatch · ${stats.catalog_size} juegos · ${engine}`;
+      } catch {
+        // El pie de página es informativo: si /stats falla, se deja el texto por defecto.
+      }
+    }
+
+    function renderResults(items) {
+      const list = $("results");
+      list.replaceChildren();
+      const best = Math.max(...items.map((r) => r.score), 0.001);
+      items.forEach((rec, i) => {
+        const card = $("card-tpl").content.firstElementChild.cloneNode(true);
+        card.querySelector(".rank").textContent = i + 1;
+        card.querySelector(".title").textContent = rec.title;
+        card.querySelector(".bar > div").style.width = `${Math.round((rec.score / best) * 100)}%`;
+        card.querySelector(".score").textContent = `Similitud ${rec.score.toFixed(3)}`;
+        card.querySelectorAll("[data-vote]").forEach((btn) => {
+          btn.addEventListener("click", () => sendVote(rec.title, Number(btn.dataset.vote), card));
+        });
+        list.appendChild(card);
+      });
+    }
+
+    async function sendVote(game, vote, card) {
+      const resp = await fetch("/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, game, vote }),
+      });
+      if (!resp.ok) {
+        setStatus("No se pudo guardar tu voto.", true);
+        return;
+      }
+      card.querySelectorAll("[data-vote]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.vote) === vote)));
+    }
+
+    $("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const body = {
+        liked_games: mode === "games" ? ["game-1", "game-2", "game-3"].map((id) => $(id).value.trim()).filter(Boolean) : [],
+        tags: mode === "tags" ? currentTags() : [],
+        limit: Number($("limit").value),
+      };
+      if (!body.liked_games.length && !body.tags.length) {
+        setStatus(mode === "games" ? "Escribe al menos un juego." : "Escribe al menos un género o tema.", true);
+        return;
+      }
+      $("submit").disabled = true;
+      setStatus("Buscando…");
+      try {
+        const resp = await fetch("/recommendations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          $("results").replaceChildren();
+          setStatus(resp.status === 400 ? "No reconocimos esos juegos o tags. Prueba con otros." : "Algo salió mal al recomendar.", true);
+          return;
+        }
+        renderResults(data);
+        setStatus(data.length ? `${data.length} recomendaciones` : "No encontramos juegos parecidos.");
+      } catch {
+        setStatus("No se pudo conectar con la API.", true);
+      } finally {
+        $("submit").disabled = false;
+      }
+    });
+
+    loadCatalog();
+    loadEngine();
+  </script>
+</body>
+</html>
