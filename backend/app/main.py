@@ -9,22 +9,26 @@ from typing import Literal
 
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.admin import router as admin_router
 from app.auth import require_permission
 from app.auth import router as auth_router
 from app.catalog import CATALOG
-from app.crypto import MissingKeyError, pseudonymize
+from app.crypto import pseudonymize
 from app.db import init_db, save_vote
+from app.errors import register_error_handlers
+from app.logging_safe import configure_logging
 from app.me import router as me_router
 from app.model import get_model
 from app.recommender import active_recommender, canonical_title, recommend
+from app.reports import router as reports_router
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    configure_logging()
     get_model()  # carga (y verifica) el modelo al arrancar, no en la primera consulta
     init_db()
     yield
@@ -35,9 +39,11 @@ app = FastAPI(title="GameMatch", description="Recomendador de videojuegos indie"
 # Últimas latencias de /recommendations (ms), para medir el p95 en producción.
 _latencies: deque[float] = deque(maxlen=1000)
 
+register_error_handlers(app)
 app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(admin_router)
+app.include_router(reports_router)
 
 INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 
@@ -61,12 +67,6 @@ class Feedback(BaseModel):
 
     game: str = Field(min_length=1, max_length=200, examples=["Hades"])
     vote: Literal[1, -1]
-
-
-@app.exception_handler(MissingKeyError)
-async def missing_key(_: Request, __: MissingKeyError) -> JSONResponse:
-    # Sin claves no se guarda nada; la respuesta no dice cuál falta.
-    return JSONResponse(status_code=503, content={"detail": "Servicio no disponible por falta de configuración"})
 
 
 @app.middleware("http")

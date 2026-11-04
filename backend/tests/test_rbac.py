@@ -17,7 +17,6 @@ from app.main import app
 
 client = TestClient(app)
 ROLES = ("usuario", "analista", "admin")
-PENDIENTE = pytest.mark.xfail(strict=True, reason="GET /reports/feedback se agrega en el PR 4")
 
 
 def _todos(metodo: str, ruta: str, esperado: int) -> list[tuple]:
@@ -41,6 +40,7 @@ MATRIZ = [
     *_todos("POST", "/recommendations", 200),
     *_protegida("GET", "/me", 200, 200, 200),
     *_protegida("GET", "/me/feedback", 200, 200, 200),
+    *_protegida("GET", "/reports/feedback", 403, 200, 200),
     *_protegida("PATCH", "/me", 200, 200, 200),
     *_protegida("DELETE", "/me", 204, 204, 409),  # el admin de la prueba es el último: ver test_auth
     *_protegida("POST", "/feedback", 201, 403, 403),
@@ -50,9 +50,6 @@ MATRIZ = [
     *_protegida("PATCH", "/admin/accounts/{id}/role", 403, 403, 200),
     *_protegida("PATCH", "/admin/accounts/{id}/status", 403, 403, 200),
     *_protegida("POST", "/admin/accounts/{id}/reveal-email", 403, 403, 200),
-]
-REPORTES = [
-    pytest.param(*fila, marks=PENDIENTE) for fila in _protegida("GET", "/reports/feedback", 403, 200, 200)
 ]
 
 
@@ -75,7 +72,7 @@ def cuentas(nueva_cuenta) -> dict:
     return {rol: nueva_cuenta(rol) for rol in ROLES}
 
 
-@pytest.mark.parametrize("rol,metodo,ruta,esperado", [*MATRIZ, *REPORTES])
+@pytest.mark.parametrize("rol,metodo,ruta,esperado", MATRIZ)
 def test_matriz_rbac(cuentas, nueva_cuenta, rol, metodo, ruta, esperado):
     objetivo, _ = nueva_cuenta()
     headers = cuentas[rol][1] if rol else {}
@@ -86,7 +83,7 @@ def test_matriz_rbac(cuentas, nueva_cuenta, rol, metodo, ruta, esperado):
 def test_todo_endpoint_figura_en_la_matriz():
     """Un método o una ruta nueva sin fila en la matriz hace fallar esta prueba."""
     publicas = {("POST", "/auth/register"), ("POST", "/auth/login")}
-    cubiertas = {(fila[1], fila[2]) for fila in MATRIZ} | {("GET", "/reports/feedback")} | publicas
+    cubiertas = {(fila[1], fila[2]) for fila in MATRIZ} | publicas
     rutas = {
         (metodo.upper(), ruta.replace("{account_id}", "{id}"))
         for ruta, operaciones in app.openapi()["paths"].items()
