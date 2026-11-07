@@ -51,8 +51,10 @@ No requiere instalar Python: basta con tener Docker.
 
 ```bash
 docker run -p 8000:8000 ghcr.io/niclasbravo/devops:latest
-# API en http://localhost:8000/docs
+# Página en http://localhost:8000 y API en http://localhost:8000/docs
 ```
+
+Así funcionan las recomendaciones, pero no las cuentas ni los votos: esas funciones responden 503 hasta configurar las claves. Para usarlas, y para que los datos sobrevivan al contenedor, ver la sección 8.
 
 Para construir la imagen desde el código:
 
@@ -95,7 +97,7 @@ mantiene su firma, así que la API no cambió.
 | 5 | `ml/evaluate.py` | Precision@10, nDCG@10, cobertura y latencia p95 contra el Jaccard actual **sobre el mismo catálogo**, usando `similar_games` de IGDB y las consultas del equipo (`ml/eval_queries.json`) |
 | 6 | `ml/train.py` | Si supera las metas, guarda `models/gamematch.joblib` y `models/model_meta.json` (SHA-256, commit, métricas). Si no, termina con error y no guarda nada |
 | 7 | `ci.yml` | El CI de siempre verifica el hash, prueba la API y construye la imagen Docker con el modelo |
-| 8-10 | `app/` | `/recommendations` usa el modelo; `POST /feedback` guarda votos anónimos; `/stats` muestra la latencia p50/p95 y la versión del modelo. `entrenamiento.yml` reentrena cada mes y avisa a Discord si baja el nDCG |
+| 8-10 | `app/` | `/recommendations` usa el modelo; `POST /feedback` guarda votos seudonimizados; `/stats` muestra la latencia p50/p95, y `/admin/model` la versión del modelo. `entrenamiento.yml` reentrena cada mes y avisa a Discord si baja el nDCG |
 
 ### Métricas del modelo actual
 
@@ -157,7 +159,7 @@ Además hay que activar *Settings → Actions → General → Allow GitHub Actio
 - **Token de IGDB:** solo en secrets de Actions y en `backend/.env`, que está en `.gitignore`.
 - **Modelo alterado:** joblib usa pickle, que puede ejecutar código al cargarse. La API calcula el SHA-256 del
   archivo y lo compara con `model_meta.json` **antes** de cargarlo; si no coincide, lo rechaza y usa Jaccard.
-- **Privacidad de los votos:** `/feedback` acepta solo un id anónimo, el juego y el voto.
+- **Privacidad de los votos:** `/feedback` exige sesión y guarda un seudónimo HMAC, el juego, el voto y la fecha. Ver la sección 8.
 - **Sesgo de popularidad:** se mide la cobertura del catálogo y, si queda bajo 40 %, el entrenamiento aplica una
   penalización a los juegos más valorados.
 
@@ -176,3 +178,36 @@ Revisión hecha al cierre de la Entrega 1 para confirmar que ninguna credencial 
 | Secretos en el código | No hay claves, tokens ni contraseñas en el repositorio (revisado) | No |
 
 **Decisiones técnicas:** se toman en Pull Requests revisados por otro integrante y quedan registradas en el historial del repositorio. El rol de tech coach rota entre los integrantes en cada mini-Dojo.
+
+## 8. Privacidad y control de acceso (Actividad 6)
+
+El diseño y sus decisiones están en `docs/superpowers/specs/2026-11-04-privacidad-rbac-design.md`.
+
+### Configuración
+
+Sin claves la API arranca, pero lo que las necesita responde 503. No hay claves por defecto. Las variables están en `backend/.env.example`.
+
+```bash
+docker run -p 8000:8000 --env-file backend/.env -e GM_DB_PATH=/app/data/gamematch.db \
+  -v gamematch-data:/app/data ghcr.io/niclasbravo/devops:latest
+```
+
+Sin el volumen en `/app/data`, la base se pierde al borrar el contenedor.
+
+### Tareas administrativas
+
+```bash
+cd backend
+python -m app.cli create-admin --alias <alias>   # primer administrador; pide la contraseña
+python -m app.cli migrate-feedback               # migra data/feedback.jsonl y lo borra
+```
+
+### Roles
+
+| Rol | Puede | No puede |
+|---|---|---|
+| `usuario` | Votar, y ver, cambiar o borrar sus datos | Ver datos de otras personas ni reportes |
+| `analista` | Ver reportes agregados y sus datos | Votar, ver cuentas, seudónimos ni auditoría |
+| `admin` | Gestionar cuentas, ver auditoría y reportes | Votar, leer contraseñas o claves, cambiar su propio rol |
+
+Las registraciones siempre crean cuentas `usuario`. La matriz completa está en `backend/tests/test_rbac.py`, y el CI la comprueba en cada PR.
