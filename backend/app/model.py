@@ -24,6 +24,8 @@ import numpy as np
 from scipy import sparse
 from sklearn.preprocessing import normalize
 
+from app.media import MEDIA_FILENAME, GameMedia, load_media
+
 logger = logging.getLogger("gamematch.model")
 
 # Grupos de categorías que se codifican como 0/1 (además del texto).
@@ -31,6 +33,29 @@ CATEGORY_GROUPS = ("genres", "themes", "game_modes", "keywords")
 
 DEFAULT_MODEL_PATH = Path(__file__).resolve().parent.parent / "models" / "gamematch.joblib"
 META_FILENAME = "model_meta.json"
+
+# Para explicar una recomendación ("Comparte: Roguelike · Mitología"): grupos en orden de interés,
+# y etiquetas que no aportan porque las tienen casi todos los juegos del catálogo.
+REASON_GROUPS = ("genres", "themes", "keywords", "game_modes")
+GENERIC_LABELS = frozenset({"Indie", "Single player"})
+MAX_REASONS = 3
+# Keywords de IGDB que hablan de la tienda o la plataforma, no del juego: no sirven como razón.
+META_KEYWORD = re.compile(
+    r"\bsteam\b|achievement|controller|support for|kickstarter|crowdfunding|distribution|soundtrack|award|"
+    r"nominee|winner|gamepass|games with gold|previously on|gametap|gamersgate|demo\b|free-to-play|freeware|"
+    r"greenlight|retail|game reference|conversation|\bigf\b|xbox live|mod support|editor|"
+    r"\bpax\b|\bgdc\b|\be3\b|festival|showcase|game jam|crowd ?fund|early access"
+)
+MIN_KEYWORD_FREQ = 10  # una keyword que casi nadie tiene suele ser ruido (nombres propios, premios)
+
+
+def clean_year(value) -> int | None:
+    """Año como entero, o None si falta (NaN, vacío o texto no numérico)."""
+    try:
+        year = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return year if 1950 <= year <= 2100 else None
 
 
 class ModelIntegrityError(RuntimeError):
@@ -110,7 +135,7 @@ def verify_model_file(model_path: Path | None = None) -> dict:
 class ContentModel:
     """Recomendador por contenido sobre un bundle generado por `ml.features.fit_bundle`."""
 
-    def __init__(self, bundle: dict, meta: dict | None = None):
+    def __init__(self, bundle: dict, meta: dict | None = None, media: GameMedia | None = None):
         self.vectorizer = bundle["vectorizer"]
         self.binarizers = bundle["binarizers"]
         self.weights = bundle["weights"]
@@ -118,6 +143,7 @@ class ContentModel:
         self.games: list[dict] = bundle["games"]
         self.popularity_penalty: float = bundle.get("popularity_penalty", 0.0)
         self.meta = meta or {}
+        self.media = media or GameMedia()  # portadas, fichas y precios: solo para mostrar
         self.sq_norms = np.asarray(self.matrix.multiply(self.matrix).sum(axis=1)).ravel()
 
         popularity = np.log1p(np.array([g.get("rating_count") or 0 for g in self.games], dtype=np.float32))
@@ -130,6 +156,13 @@ class ContentModel:
             best = self._by_title.get(key)
             if best is None or (game.get("rating_count") or 0) > (self.games[best].get("rating_count") or 0):
                 self._by_title[key] = i
+
+        # Cuántos juegos tienen cada etiqueta: ordena las razones de la más distintiva a la más común.
+        self._label_freq: dict[str, int] = {}
+        for game in self.games:
+            for group in REASON_GROUPS:
+                for label in set(game.get(group, [])):
+                    self._label_freq[label] = self._label_freq.get(label, 0) + 1
 
         # Índice etiqueta → (grupo, columna) para traducir los tags que escribe el usuario.
         self._label_index: dict[str, list[tuple[str, int]]] = {}
@@ -199,16 +232,63 @@ class ContentModel:
         top = top[np.lexsort((top, -sims[top]))]
         return [(int(i), float(sims[i])) for i in top if sims[i] > 0]
 
+    def profile_labels(self, liked_idx: list[int], tags: list[str]) -> set[str]:
+        """Etiquetas del perfil (las de los juegos favoritos más los tags reconocidos), para explicar resultados."""
+        labels: set[str] = set()
+        for i in liked_idx:
+            for group in REASON_GROUPS:
+                labels.update(self.games[i].get(group, []))
+        for tag in tags:
+            for group, col in self._label_index.get(normalize_label(tag), []):
+                labels.add(self.binarizers[group].classes_[col])
+        return labels
+
+    def _explains(self, group: str, label: str) -> bool:
+        """Si una etiqueta sirve para explicar al usuario por qué se recomienda un juego."""
+        if group != "keywords":
+            return True
+        return self._label_freq.get(label, 0) >= MIN_KEYWORD_FREQ and not META_KEYWORD.search(label)
+
+    def describe(self, index: int, score: float, profile_labels: set[str]) -> dict:
+        """Ficha de un juego recomendado: año, categorías y hasta 3 etiquetas que comparte con el perfil."""
+        game = self.games[index]
+        shared = {
+            label
+            for group in REASON_GROUPS
+            for label in game.get(group, [])
+            if label in profile_labels and label not in GENERIC_LABELS and self._explains(group, label)
+        }
+        # Primero las más raras del catálogo: "metroidvania" explica más que "Adventure".
+        reasons = sorted(shared, key=lambda label: (self._label_freq.get(label, 0), label))
+        return {
+            "title": game["title"],
+            "score": round(score, 3),
+            "year": clean_year(game.get("year")),
+            "genres": [g for g in game.get("genres", []) if g not in GENERIC_LABELS],
+            "themes": list(game.get("themes", [])),
+            "modes": list(game.get("game_modes", [])),
+            "reasons": reasons[:MAX_REASONS],
+            **self.media.get(game.get("id")),
+        }
+
     def recommend(self, liked_games: list[str], tags: list[str], limit: int) -> list[dict]:
         liked_idx = sorted({i for i in (self.find(t) for t in liked_games) if i is not None})
         top = self.top_indices(liked_idx, tags, limit)
-        return [{"title": self.games[i]["title"], "score": round(s, 3)} for i, s in top]
+        labels = self.profile_labels(liked_idx, tags)
+        return [self.describe(i, s, labels) for i, s in top]
 
     def list_games(self, limit: int, offset: int) -> list[dict]:
         out = []
         for game in self.games[offset : offset + limit]:
             tags = set(game.get("genres", [])) | set(game.get("themes", [])) | set(game.get("game_modes", []))
-            out.append({"title": game["title"], "tags": sorted(tags)})
+            out.append(
+                {
+                    "title": game["title"],
+                    "tags": sorted(tags),
+                    "year": clean_year(game.get("year")),
+                    "cover_id": self.media.get(game.get("id"))["cover_id"],
+                }
+            )
         return out
 
 
@@ -227,7 +307,7 @@ def load_model(model_path: Path | None = None) -> ContentModel | None:
         return None
     # joblib usa pickle: solo llegamos aquí si el hash coincide con el que registró nuestro pipeline,
     # y model_meta.json entra al repo solo por PR revisado.
-    model = ContentModel(joblib.load(model_path), meta)
+    model = ContentModel(joblib.load(model_path), meta, load_media(model_path.parent / MEDIA_FILENAME))
     logger.info("Modelo cargado: %d juegos, commit %s", model.size, meta.get("commit", "?"))
     return model
 

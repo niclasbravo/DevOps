@@ -6,7 +6,16 @@ import pytest
 
 import app
 
-HTML = (Path(app.__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+STATIC = Path(app.__file__).parent / "static"
+# La página es index.html más sus scripts: las reglas valen para todo el código que corre en el navegador.
+HTML = "\n".join((STATIC / name).read_text(encoding="utf-8") for name in ("index.html", "app.js", "hero.js"))
+
+
+def test_pagina_carga_su_script_y_estilos_locales():
+    index = (STATIC / "index.html").read_text(encoding="utf-8")
+    assert '<script src="/static/app.js"' in index
+    assert 'href="/static/app.css"' in index
+    assert "fonts.googleapis.com" not in HTML + (STATIC / "app.css").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize(

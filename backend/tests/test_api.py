@@ -1,5 +1,6 @@
 """Pruebas de la API HTTP."""
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -18,6 +19,26 @@ def test_pagina_principal_sirve_html():
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/html")
     assert "GameMatch" in resp.text
+
+
+@pytest.mark.parametrize(
+    ("ruta", "tipo"),
+    [
+        ("/static/app.css", "text/css"),
+        ("/static/app.js", "text/javascript"),
+        ("/static/fonts/anybody-latin.woff2", "font/woff2"),
+        ("/static/fonts/atkinson-hyperlegible-next-latin.woff2", "font/woff2"),
+    ],
+)
+def test_pagina_sirve_sus_archivos_estaticos(ruta, tipo):
+    resp = client.get(ruta)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith(tipo)
+
+
+def test_recomendaciones_traen_ficha_para_la_pagina():
+    body = client.post("/recommendations", json={"tags": ["roguelike"], "limit": 3}).json()
+    assert {"year", "genres", "themes", "modes", "reasons"} <= body[0].keys()
 
 
 def test_listado_de_juegos_no_vacio():
