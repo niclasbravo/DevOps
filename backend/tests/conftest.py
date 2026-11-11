@@ -65,6 +65,7 @@ def entorno_seguro(monkeypatch, tmp_path):
     for name in ("GM_PSEUDONYM_KEY", "GM_EMAIL_KEY", "GM_JWT_SECRET"):
         monkeypatch.setenv(name, secrets.token_urlsafe(48))
     monkeypatch.setenv("GM_DB_PATH", str(tmp_path / "gamematch.db"))
+    monkeypatch.setenv("GM_OUTBOX_DIR", str(tmp_path / "outbox"))  # buzón simulado, propio de cada prueba
 
 
 @pytest.fixture
@@ -77,6 +78,18 @@ def nueva_cuenta():
         return account_id, {"Authorization": f"Bearer {create_token(account_id)}"}
 
     return crear
+
+
+@pytest.fixture
+def buzon(tmp_path):
+    """Lee los correos que el sistema envió en esta prueba."""
+    import json
+
+    def leer() -> list[dict]:
+        carpeta = tmp_path / "outbox"
+        return [json.loads(f.read_text("utf-8")) for f in sorted(carpeta.glob("*.json"))] if carpeta.exists() else []
+
+    return leer
 
 
 @pytest.fixture

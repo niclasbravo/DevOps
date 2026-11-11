@@ -112,6 +112,26 @@
     footer a { color: inherit; }
     [hidden] { display: none !important; }
 
+    .register-only { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 12px; }
+    .register-only legend { color: var(--muted); font-size: 0.85rem; padding: 0; margin-bottom: 8px; }
+    fieldset { border: 0; padding: 0; margin: 0; }
+    .check { display: flex; gap: 8px; align-items: flex-start; color: var(--text); font-size: 0.875rem; margin-bottom: 10px; }
+    .check input { margin-top: 3px; }
+    .check small { display: block; color: var(--muted); }
+    input[type="email"] {
+      width: 100%; padding: 10px 12px; margin-bottom: 10px;
+      background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; font: inherit;
+    }
+    #privacy-dialog { width: min(560px, calc(100vw - 32px)); }
+    .purpose { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+    .purpose header { display: flex; justify-content: space-between; gap: 8px; padding: 0; max-width: none; }
+    .purpose p { margin: 6px 0; color: var(--muted); font-size: 0.875rem; }
+    .badge { font-size: 0.75rem; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+    .badge.on { background: var(--accent); color: var(--accent-ink); }
+    .history { list-style: none; padding: 0; margin: 0; font-size: 0.8rem; color: var(--muted); max-height: 160px; overflow: auto; }
+    dialog h3 { font-size: 1rem; margin: 18px 0 8px; }
+
     @media (max-width: 520px) {
       .card { grid-template-columns: 1fr auto; }
       .rank { display: none; }
@@ -125,6 +145,7 @@
     <p class="lead">Descubre juegos indie parecidos a los que ya te gustan.</p>
     <div class="session">
       <span id="session-label">Sin sesión</span>
+      <button type="button" class="link" id="privacy-button" hidden>Mi privacidad</button>
       <button type="button" class="link" id="session-button">Iniciar sesión</button>
     </div>
   </header>
@@ -178,6 +199,23 @@
       <input type="text" id="session-alias" autocomplete="username" required>
       <label for="session-password">Contraseña (de 12 a 128 caracteres)</label>
       <input type="password" id="session-password" autocomplete="current-password" required>
+      <fieldset class="register-only">
+        <legend>Solo si vas a crear una cuenta</legend>
+        <label class="check"><input type="checkbox" id="reg-child">
+          <span>Tengo menos de 14 años<small>Tu madre, padre o representante legal tendrá que confirmar la cuenta.</small></span>
+        </label>
+        <div id="reg-guardian" hidden>
+          <label for="reg-guardian-email">Correo de tu representante legal (no lo guardamos)</label>
+          <input type="email" id="reg-guardian-email" autocomplete="off">
+        </div>
+        <div id="reg-purposes">
+          <p class="hint">Opcional. Nada viene marcado y puedes cambiarlo después en «Mi privacidad».</p>
+        </div>
+        <div id="reg-email" hidden>
+          <label for="reg-email-input">Correo para recuperar la cuenta</label>
+          <input type="email" id="reg-email-input" autocomplete="email">
+        </div>
+      </fieldset>
       <div class="actions">
         <button class="primary" type="submit" value="login">Entrar</button>
         <button class="secondary" type="submit" value="register">Crear cuenta</button>
@@ -185,6 +223,16 @@
       <p class="dialog-error" id="session-error" role="alert"></p>
       <button type="button" class="link" id="session-cancel">Cancelar</button>
     </form>
+  </dialog>
+
+  <dialog id="privacy-dialog" aria-labelledby="privacy-title">
+    <h2 id="privacy-title">Mi privacidad</h2>
+    <p class="hint">Cada finalidad se autoriza por separado. Aceptar una no autoriza las demás.</p>
+    <div id="privacy-purposes"></div>
+    <p class="dialog-error" id="privacy-error" role="alert"></p>
+    <h3>Historial de consentimientos</h3>
+    <ol class="history" id="privacy-history"></ol>
+    <div class="actions"><button type="button" class="secondary" id="privacy-close">Cerrar</button></div>
   </dialog>
 
   <template id="card-tpl">
@@ -209,6 +257,59 @@
     // El token vive solo en esta variable: no se guarda en el navegador y recargar cierra la sesión.
     let token = null;
     let pendingVote = null;
+    let purposes = [];
+
+    const PURPOSE_NAMES = {
+      correo_recuperacion: "Correo para recuperar la cuenta",
+      votos_analitica: "Usar mis votos en reportes y en el modelo",
+      novedades_correo: "Recibir novedades por correo",
+    };
+
+    function authHeaders(extra = {}) {
+      return { ...extra, Authorization: `Bearer ${token}` };
+    }
+
+    // Casillas de finalidades del registro: se construyen con textContent y ninguna viene marcada.
+    async function loadPurposes() {
+      const resp = await fetch("/consents/purposes");
+      if (!resp.ok) return;
+      purposes = await resp.json();
+      const box = $("reg-purposes");
+      for (const p of purposes) {
+        const label = document.createElement("label");
+        label.className = "check";
+        label.dataset.child = String(p.allowed_for_children);
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.value = p.code;
+        input.name = "reg-consent";
+        const span = document.createElement("span");
+        span.textContent = PURPOSE_NAMES[p.code] || p.code;
+        const small = document.createElement("small");
+        small.textContent = `${p.text} (versión ${p.version})`;
+        span.appendChild(small);
+        label.append(input, span);
+        box.appendChild(label);
+        if (p.code === "correo_recuperacion") {
+          input.addEventListener("change", () => { $("reg-email").hidden = !input.checked; });
+        }
+      }
+    }
+
+    function selectedConsents() {
+      return [...document.querySelectorAll("input[name=reg-consent]:checked")].map((i) => i.value);
+    }
+
+    $("reg-child").addEventListener("change", () => {
+      const child = $("reg-child").checked;
+      $("reg-guardian").hidden = !child;
+      // Bajo 14 años las finalidades las decide el representante, no la persona.
+      $("reg-purposes").hidden = child;
+      if (child) {
+        document.querySelectorAll("input[name=reg-consent]").forEach((i) => { i.checked = false; });
+        $("reg-email").hidden = true;
+      }
+    });
 
     function setStatus(text, isError = false) {
       $("status").textContent = text;
@@ -218,11 +319,13 @@
     function showSession(alias) {
       $("session-label").textContent = alias ? `Sesión: ${alias}` : "Sin sesión";
       $("session-button").textContent = alias ? "Salir" : "Iniciar sesión";
+      $("privacy-button").hidden = !alias;
     }
 
     function logout() {
       token = null;
       showSession(null);
+      if ($("privacy-dialog").open) $("privacy-dialog").close();
     }
 
     function openSessionDialog(hint) {
@@ -249,14 +352,92 @@
     }
 
     async function register(alias, password) {
-      const resp = await postJson("/auth/register", { alias, password });
+      const body = { alias, password };
+      if ($("reg-child").checked) {
+        body.is_child = true;
+        body.guardian_email = $("reg-guardian-email").value.trim();
+      } else {
+        body.consents = selectedConsents();
+        const email = $("reg-email-input").value.trim();
+        if (body.consents.includes("correo_recuperacion") && email) body.email = email;
+      }
+      const resp = await postJson("/auth/register", body);
       if (resp.status === 409) throw new Error("Ese alias no está disponible.");
       if (resp.status === 422) {
-        throw new Error("Usa un alias de 3 a 30 letras, números, - o _, y una contraseña de 12 a 128 caracteres.");
+        throw new Error(body.is_child
+          ? "Revisa el alias, la contraseña y el correo de tu representante."
+          : "Usa un alias de 3 a 30 letras, números, - o _, y una contraseña de 12 a 128 caracteres.");
       }
       if (!resp.ok) throw new Error("No se pudo crear la cuenta.");
+      if ((await resp.json()).estado === "pendiente_representante") {
+        throw new Error("Listo. Enviamos un enlace a tu representante: podrás entrar cuando confirme la cuenta.");
+      }
       await login(alias, password);
     }
+
+    async function loadPrivacy() {
+      $("privacy-error").textContent = "";
+      const [stateResp, historyResp] = await Promise.all([
+        fetch("/me/consents", { headers: authHeaders() }),
+        fetch("/me/consents/history", { headers: authHeaders() }),
+      ]);
+      if (stateResp.status === 401) {
+        $("privacy-dialog").close();
+        logout();
+        openSessionDialog("Tu sesión venció. Vuelve a entrar.");
+        return;
+      }
+      const state = await stateResp.json();
+      const box = $("privacy-purposes");
+      box.replaceChildren();
+      for (const item of state) {
+        const info = purposes.find((p) => p.code === item.finalidad) || {};
+        const card = document.createElement("section");
+        card.className = "purpose";
+        const head = document.createElement("header");
+        const name = document.createElement("strong");
+        name.textContent = PURPOSE_NAMES[item.finalidad] || item.finalidad;
+        const badge = document.createElement("span");
+        const on = item.estado === "otorgado";
+        badge.className = on ? "badge on" : "badge";
+        badge.textContent = on ? `Autorizado (v${item.version_aceptada})` : "No autorizado";
+        head.append(name, badge);
+        const text = document.createElement("p");
+        text.textContent = `${info.text || ""} Versión vigente: ${item.version_vigente}.`;
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = on ? "Revocar" : "Autorizar";
+        button.addEventListener("click", () => toggleConsent(item.finalidad, on));
+        card.append(head, text, button);
+        box.appendChild(card);
+      }
+      const list = $("privacy-history");
+      list.replaceChildren();
+      for (const event of await historyResp.json()) {
+        const li = document.createElement("li");
+        const who = event.actor === "titular" ? "tú" : event.actor;
+        li.textContent = `${event.fecha} · ${PURPOSE_NAMES[event.finalidad] || event.finalidad} · ${event.estado} (v${event.version}, ${who})`;
+        list.appendChild(li);
+      }
+    }
+
+    async function toggleConsent(purpose, isOn) {
+      const resp = await fetch(`/me/consents/${purpose}`, { method: isOn ? "DELETE" : "POST", headers: authHeaders() });
+      if (!resp.ok) {
+        $("privacy-error").textContent = resp.status === 403
+          ? "Esta finalidad la autoriza tu representante legal."
+          : "No se pudo guardar el cambio.";
+        return;
+      }
+      await loadPrivacy();
+    }
+
+    $("privacy-button").addEventListener("click", async () => {
+      $("privacy-dialog").showModal();
+      await loadPrivacy();
+    });
+    $("privacy-close").addEventListener("click", () => $("privacy-dialog").close());
 
     $("session-button").addEventListener("click", () => {
       if (token) logout();
@@ -434,6 +615,7 @@
 
     loadCatalog();
     loadEngine();
+    loadPurposes();
   </script>
 </body>
 </html>

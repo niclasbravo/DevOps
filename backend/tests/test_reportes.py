@@ -5,6 +5,7 @@ from contextlib import closing
 import pytest
 from fastapi.testclient import TestClient
 
+from app.consent import grant
 from app.db import connect, upsert_vote
 from app.main import app
 from app.reports import feedback_report
@@ -12,10 +13,12 @@ from app.reports import feedback_report
 client = TestClient(app)
 
 
-def _votos(game: str, positivos: int, negativos: int = 0) -> None:
+def _votos(game: str, positivos: int, negativos: int = 0, consienten: bool = True) -> None:
     with closing(connect()) as conn, conn:
         for n in range(positivos + negativos):
             upsert_vote(conn, f"{game}-{n}", game, 1 if n < positivos else -1, "2026-11-04")
+            if consienten:
+                grant(conn, f"{game}-{n}", "votos_analitica", "titular")
 
 
 def test_juego_con_cuatro_votos_se_omite():
