@@ -4,15 +4,16 @@ import datetime as dt
 import sqlite3
 import uuid
 from contextlib import closing
+from typing import Literal
 
 import jwt
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.audit import record
 from app.crypto import encrypt_email, get_key, hash_password, needs_rehash, verify_password
-from app.db import connect
+from app.db import connect, write_transaction
 
 TOKEN_MINUTES = 30
 MAX_FAILED_LOGINS = 5
@@ -38,6 +39,19 @@ class RegisterRequest(BaseModel):
     alias: str = Field(pattern=ALIAS_PATTERN, examples=["jugador_1"])
     password: str = Field(min_length=PASSWORD_MIN, max_length=PASSWORD_MAX)
     email: str | None = Field(default=None, max_length=254, pattern=EMAIL_PATTERN)
+    # Solo se pregunta si tiene menos de 14 años: es lo único que cambia las reglas (art. 16 quáter).
+    is_child: bool = False
+    guardian_email: str | None = Field(default=None, max_length=254, pattern=EMAIL_PATTERN)
+    # Finalidades aceptadas explícitamente. Lo que no viene en la lista no se otorga.
+    consents: list[Literal["correo_recuperacion", "votos_analitica", "novedades_correo"]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check_child_fields(self) -> "RegisterRequest":
+        if self.is_child and self.guardian_email is None:
+            raise ValueError("guardian_email es obligatorio para menores de 14 años")
+        if not self.is_child and self.guardian_email is not None:
+            raise ValueError("guardian_email solo se pide a menores de 14 años")
+        return self
 
 
 class LoginRequest(BaseModel):
@@ -63,17 +77,40 @@ def decode_token(token: str) -> str:
     return claims["sub"]
 
 
-def create_account(alias: str, password: str, email: str | None = None, role: str = "usuario") -> str:
-    """Crea la cuenta y devuelve su id. Lanza sqlite3.IntegrityError si el alias ya existe."""
+def insert_account(
+    conn: sqlite3.Connection,
+    alias: str,
+    password: str,
+    email: str | None = None,
+    role: str = "usuario",
+    is_child: bool = False,
+) -> str:
+    """Inserta la cuenta en la transacción dada. Una cuenta de menor nace inactiva, a la espera del representante."""
     account_id = str(uuid.uuid4())
     encrypted = encrypt_email(email) if email else None
-    with closing(connect()) as conn, conn:
-        conn.execute(
-            """INSERT INTO accounts (id, alias, password_hash, email_encrypted, role_id, created_on)
-               VALUES (?, ?, ?, ?, (SELECT id FROM roles WHERE name = ?), ?)""",
-            (account_id, alias, hash_password(password), encrypted, role, _now().date().isoformat()),
-        )
+    conn.execute(
+        """INSERT INTO accounts (id, alias, password_hash, email_encrypted, role_id, created_on,
+                                 is_child, pending_guardian, is_active)
+           VALUES (?, ?, ?, ?, (SELECT id FROM roles WHERE name = ?), ?, ?, ?, ?)""",
+        (
+            account_id,
+            alias,
+            hash_password(password),
+            encrypted,
+            role,
+            _now().date().isoformat(),
+            int(is_child),
+            int(is_child),
+            int(not is_child),
+        ),
+    )
     return account_id
+
+
+def create_account(alias: str, password: str, email: str | None = None, role: str = "usuario") -> str:
+    """Crea la cuenta y devuelve su id. Lanza sqlite3.IntegrityError si el alias ya existe."""
+    with closing(connect()) as conn, conn:
+        return insert_account(conn, alias, password, email, role)
 
 
 def _is_locked(account: sqlite3.Row) -> bool:
@@ -123,7 +160,7 @@ def current_account(credentials: HTTPAuthorizationCredentials | None) -> sqlite3
     with closing(connect()) as conn:
         return conn.execute(
             """SELECT a.*, r.name AS role FROM accounts a JOIN roles r ON r.id = a.role_id
-               WHERE a.id = ? AND a.is_active = 1""",
+               WHERE a.id = ? AND a.is_active = 1 AND a.pending_guardian = 0""",
             (account_id,),
         ).fetchone()
 
@@ -165,11 +202,36 @@ def is_last_admin(conn: sqlite3.Connection, account_id: str) -> bool:
 
 @router.post("/register", status_code=201)
 def register(req: RegisterRequest) -> dict:
+    # Importación local: consent y guardian dependen de este módulo para sus permisos.
+    from app import mailer
+    from app.consent import grant
+    from app.crypto import pseudonymize
+    from app.guardian import confirmation_link, create_verification, guardian_email_body
+
+    if req.email and "correo_recuperacion" not in req.consents:
+        raise HTTPException(status_code=400, detail="Guardar el correo requiere la finalidad correo_recuperacion")
+    if req.is_child and req.consents:
+        raise HTTPException(status_code=400, detail="Las finalidades de un menor las decide su representante")
+    if req.is_child:
+        mailer.ensure_available()  # sin buzón no se crea una cuenta que nadie podría activar
+    token = None
     try:
-        create_account(req.alias, req.password, req.email)
+        with write_transaction() as conn:
+            account_id = insert_account(conn, req.alias, req.password, req.email, is_child=req.is_child)
+            subject = pseudonymize(account_id)
+            for purpose in dict.fromkeys(req.consents):
+                grant(conn, subject, purpose, "titular")
+            if req.is_child:
+                token = create_verification(conn, account_id)
+            record("auth:register", "permitido", actor_id=account_id, conn=conn)
     except sqlite3.IntegrityError as exc:
         raise HTTPException(status_code=409, detail="Ese alias no está disponible") from exc
-    return {"alias": req.alias}
+    if token is not None:
+        link = confirmation_link(token)
+        body = guardian_email_body(req.alias, link)
+        mailer.send(req.guardian_email, "GameMatch: confirme la cuenta de su representado", body)
+        return {"alias": req.alias, "estado": "pendiente_representante"}
+    return {"alias": req.alias, "estado": "activa"}
 
 
 @router.post("/login")

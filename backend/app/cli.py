@@ -60,6 +60,30 @@ def migrate_feedback(path: Path) -> tuple[int, int]:
     return migrated, skipped
 
 
+def send_newsletter() -> int:
+    """Envío simulado de novedades. La lista se calcula en cada envío: una revocación rige en el siguiente."""
+    from contextlib import closing
+
+    from app import mailer
+    from app.audit import record
+    from app.consent import newsletter_recipients
+    from app.db import connect
+
+    mailer.ensure_available()
+    with closing(connect()) as conn:
+        recipients = newsletter_recipients(conn)
+    for to in recipients:
+        mailer.send(
+            to,
+            "Novedades de GameMatch",
+            "Nuevos juegos indie en el catálogo. Puedes dejar de recibir "
+            "estos correos revocando la finalidad novedades_correo en «Mi privacidad».",
+        )
+    record("newsletter:send", "permitido")
+    logger.info("Novedades enviadas: %d", len(recipients))
+    return len(recipients)
+
+
 def create_admin(alias: str, password: str) -> str:
     """Único camino para crear un administrador: la API solo crea cuentas `usuario`."""
     valid = RegisterRequest(alias=alias, password=password)  # lanza ValueError si los datos no son válidos
@@ -73,6 +97,7 @@ def main() -> None:
     migrate.add_argument("--path", type=Path, default=Path("data/feedback.jsonl"))
     admin = commands.add_parser("create-admin", help="Crea una cuenta de administrador")
     admin.add_argument("--alias", required=True)
+    commands.add_parser("newsletter", help="Envío simulado de novedades a quienes lo autorizaron")
     args = parser.parse_args()
     if args.command == "create-admin":
         try:
@@ -82,6 +107,8 @@ def main() -> None:
             campos = ", ".join(f"{e['loc'][0]}: {e['type']}" for e in exc.errors())
             raise SystemExit(f"Datos inválidos ({campos})") from None
         print("Administrador creado.")
+    elif args.command == "newsletter":
+        print(f"Novedades enviadas: {send_newsletter()}.")
     else:
         migrated, skipped = migrate_feedback(args.path)
         print(f"Migrados: {migrated}. Omitidos: {skipped}.")

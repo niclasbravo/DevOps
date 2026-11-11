@@ -9,6 +9,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.crypto import MissingKeyError
+from app.mailer import MailerUnavailable
 
 logger = logging.getLogger("gamematch.errors")
 
@@ -36,4 +37,5 @@ async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _validation_error)
     app.add_exception_handler(MissingKeyError, _missing_key)
+    app.add_exception_handler(MailerUnavailable, _missing_key)
     app.add_exception_handler(Exception, _unhandled)

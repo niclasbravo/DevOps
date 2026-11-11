@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.audit import record
 from app.auth import EMAIL_PATTERN, PASSWORD_MAX, PASSWORD_MIN, is_last_admin, require_permission
+from app.consent import has_consent
 from app.crypto import encrypt_email, hash_password, pseudonymize, verify_password
 from app.db import connect, write_transaction
 
@@ -50,6 +51,9 @@ def update_me(req: AccountUpdate, account: sqlite3.Row = Depends(require_permiss
     new_hash = hash_password(req.new_password) if req.new_password is not None else None
     new_email = encrypt_email(req.email) if req.email else None
     with write_transaction() as conn:
+        if req.email and not has_consent(conn, pseudonymize(account["id"]), "correo_recuperacion"):
+            record("me:update", "denegado", actor_id=account["id"], conn=conn)
+            raise HTTPException(status_code=409, detail="Primero acepta la finalidad correo_recuperacion")
         record("me:update", "permitido", actor_id=account["id"], conn=conn)
         if new_hash is not None:
             conn.execute("UPDATE accounts SET password_hash = ? WHERE id = ?", (new_hash, account["id"]))
