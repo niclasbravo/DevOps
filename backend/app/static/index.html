@@ -3,437 +3,259 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GameMatch</title>
-  <style>
-    :root {
-      --bg: #0f1115;
-      --panel: #171a21;
-      --panel-2: #1f232c;
-      --border: #2c313c;
-      --text: #e8eaf0;
-      --muted: #9aa1b0;
-      --accent: #3ecf8e;
-      --accent-ink: #062b1b;
-      --danger: #ff6b6b;
-      --radius: 12px;
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#16121b">
+  <meta name="description" content="GameMatch recomienda juegos indie parecidos a los que ya te gustan, con datos de IGDB.">
+  <title>GameMatch: juegos indie parecidos a los que te gustan</title>
+  <link rel="preload" href="/static/fonts/anybody-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/static/fonts/atkinson-hyperlegible-next-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    // El titular entra animado (hero.js). Se oculta antes del primer pintado, salvo que la persona
+    // pida menos movimiento; si la animación no llega a cargar, a los 3 s se muestra igual.
+    if (!matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      document.documentElement.classList.add("enter");
+      setTimeout(() => document.documentElement.classList.remove("enter"), 3000);
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--text);
-      font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    }
-    header, main, footer { max-width: 760px; margin: 0 auto; padding: 0 16px; }
-    header { padding-top: 40px; }
-    h1 { margin: 0; font-size: 2rem; letter-spacing: -0.02em; }
-    h1 span { color: var(--accent); }
-    .lead { color: var(--muted); margin: 4px 0 24px; }
-
-    .panel {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-    }
-    .tabs { display: flex; gap: 4px; background: var(--panel-2); padding: 4px; border-radius: 10px; margin-bottom: 20px; }
-    .tabs button {
-      flex: 1; border: 0; background: transparent; color: var(--muted);
-      padding: 8px 12px; border-radius: 8px; font: inherit; cursor: pointer;
-    }
-    .tabs button[aria-selected="true"] { background: var(--panel); color: var(--text); box-shadow: 0 1px 0 var(--border); }
-
-    label { display: block; font-size: 0.875rem; color: var(--muted); margin-bottom: 6px; }
-    input[type="text"], input[type="password"] {
-      width: 100%; padding: 10px 12px; margin-bottom: 10px;
-      background: var(--panel-2); color: var(--text);
-      border: 1px solid var(--border); border-radius: 8px; font: inherit;
-    }
-    input[type="text"]:focus, input[type="password"]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-
-    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
-    .chip {
-      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
-      padding: 4px 10px; border-radius: 999px; font-size: 0.85rem; cursor: pointer;
-    }
-    .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-
-    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
-    .row label { margin: 0; }
-    select {
-      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
-      border-radius: 8px; padding: 8px; font: inherit;
-    }
-    .primary {
-      margin-left: auto; border: 0; border-radius: 8px; padding: 10px 20px;
-      background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 600; cursor: pointer;
-    }
-    .primary:disabled { opacity: 0.6; cursor: wait; }
-
-    .status { min-height: 1.5em; margin: 16px 0 8px; color: var(--muted); }
-    .status.error { color: var(--danger); }
-
-    .results { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
-    .card {
-      display: grid; grid-template-columns: 2rem 1fr auto; gap: 12px; align-items: center;
-      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px;
-    }
-    .rank { color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; }
-    .title { font-weight: 600; overflow-wrap: anywhere; }
-    .bar { height: 6px; background: var(--panel-2); border-radius: 999px; margin-top: 6px; overflow: hidden; }
-    .bar > div { height: 100%; background: var(--accent); }
-    .score { font-size: 0.8rem; color: var(--muted); }
-    .votes { display: flex; gap: 6px; }
-    .votes button {
-      border: 1px solid var(--border); background: var(--panel-2); color: var(--text);
-      border-radius: 8px; padding: 6px 10px; cursor: pointer; font: inherit;
-    }
-    .votes button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
-
-    .session { display: flex; gap: 10px; align-items: center; justify-content: flex-end; min-height: 2em; color: var(--muted); font-size: 0.875rem; }
-    .link { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; }
-    dialog {
-      width: min(380px, calc(100vw - 32px)); padding: 20px;
-      background: var(--panel); color: var(--text);
-      border: 1px solid var(--border); border-radius: var(--radius);
-    }
-    dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
-    dialog h2 { margin: 0 0 4px; font-size: 1.15rem; }
-    dialog .hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 14px; }
-    dialog .actions { display: flex; gap: 8px; margin-top: 6px; }
-    dialog .actions .primary { margin-left: 0; flex: 1; }
-    .secondary {
-      flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
-      background: var(--panel-2); color: var(--text); font: inherit; cursor: pointer;
-    }
-    .dialog-error { min-height: 1.4em; margin: 10px 0 0; color: var(--danger); font-size: 0.85rem; }
-
-    footer { color: var(--muted); font-size: 0.8rem; padding-top: 32px; padding-bottom: 32px; }
-    footer a { color: inherit; }
-    [hidden] { display: none !important; }
-
-    @media (max-width: 520px) {
-      .card { grid-template-columns: 1fr auto; }
-      .rank { display: none; }
-      .primary { margin-left: 0; width: 100%; }
-    }
-  </style>
+  </script>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='7' width='16' height='16' rx='4' fill='%23f5a524'/%3E%3Crect x='13' y='9' width='16' height='16' rx='4' fill='none' stroke='%23f2eae0' stroke-width='3'/%3E%3C/svg%3E">
 </head>
 <body>
-  <header>
-    <h1>Game<span>Match</span></h1>
-    <p class="lead">Descubre juegos indie parecidos a los que ya te gustan.</p>
-    <div class="session">
-      <span id="session-label">Sin sesión</span>
-      <button type="button" class="link" id="session-button">Iniciar sesión</button>
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/></symbol>
+  </svg>
+
+  <a class="skip" href="#finder">Ir al buscador</a>
+
+  <header class="topbar">
+    <div class="wrap topbar-inner">
+      <a class="brand" href="/" aria-label="GameMatch, inicio">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect x="3" y="7" width="16" height="16" rx="4" class="brand-fill"/>
+          <rect x="13" y="9" width="16" height="16" rx="4" class="brand-line"/>
+        </svg>
+        <span translate="no">GameMatch</span>
+      </a>
+      <nav class="topnav" aria-label="Principal">
+        <a href="#como-funciona">Cómo funciona</a>
+        <a href="/docs">API</a>
+      </nav>
+      <div class="session">
+        <span class="session-alias" id="session-label" hidden></span>
+        <button type="button" class="btn btn-quiet" id="session-button">Iniciar sesión</button>
+      </div>
     </div>
   </header>
 
   <main>
-    <form class="panel" id="form">
-      <div class="tabs" role="tablist">
-        <button type="button" role="tab" aria-selected="true" data-mode="games">Por juegos</button>
-        <button type="button" role="tab" aria-selected="false" data-mode="tags">Por géneros y temas</button>
+    <div class="hero">
+      <div class="hero-bg" id="hero-bg" aria-hidden="true"><div class="hero-rows" id="hero-rows"></div></div>
+    <section class="finder wrap" id="finder" aria-labelledby="finder-title">
+      <h1 class="visually-hidden" id="finder-title">Encuentra juegos indie parecidos a los que te gustan</h1>
+
+      <form id="form" novalidate>
+        <div class="mode-switch" role="tablist" aria-label="Buscar por">
+          <button type="button" role="tab" id="tab-games" aria-selected="true" aria-controls="mode-games" data-mode="games">Por juegos</button>
+          <button type="button" role="tab" id="tab-tags" aria-selected="false" aria-controls="mode-tags" data-mode="tags" tabindex="-1">Por temas</button>
+        </div>
+
+        <div id="mode-games" role="tabpanel" aria-labelledby="tab-games">
+          <div class="sentence">
+            <span class="sentence-word" id="games-lead">Me gustaron</span>
+            <span class="slot" id="games-slot">
+              <span class="combo">
+                <input type="text" id="games-input" name="game" class="slot-input" role="combobox"
+                       aria-autocomplete="list" aria-expanded="false" aria-controls="games-list"
+                       aria-labelledby="games-lead" aria-describedby="games-help games-hint"
+                       autocomplete="off" spellcheck="false" placeholder="escribe un juego">
+                <ul class="options" id="games-list" role="listbox" aria-label="Juegos del catálogo" hidden></ul>
+              </span>
+            </span>
+            <span class="sentence-word">y quiero algo parecido.</span>
+          </div>
+          <p class="help" id="games-help">Hasta 3 juegos del catálogo. Elige uno de la lista mientras escribes.</p>
+          <p class="hint" id="games-hint" role="status"></p>
+          <div class="suggestions" id="games-suggestions" aria-label="Juegos para probar"></div>
+        </div>
+
+        <div id="mode-tags" role="tabpanel" aria-labelledby="tab-tags" hidden>
+          <div class="sentence">
+            <span class="sentence-word" id="tags-lead">Busco un indie con</span>
+            <span class="slot" id="tags-slot">
+              <span class="combo">
+                <input type="text" id="tags-input" name="topic" class="slot-input" role="combobox"
+                       aria-autocomplete="list" aria-expanded="false" aria-controls="tags-list"
+                       aria-labelledby="tags-lead" aria-describedby="tags-help tags-hint"
+                       autocomplete="off" spellcheck="false" placeholder="un tema">
+                <ul class="options" id="tags-list" role="listbox" aria-label="Géneros y temas" hidden></ul>
+              </span>
+            </span>
+          </div>
+          <p class="help" id="tags-help">Géneros y temas en español: terror, plataformas, sigilo. Las mecánicas más específicas van en inglés, como en IGDB: roguelike, metroidvania. Enter o coma para agregar.</p>
+          <p class="hint" id="tags-hint" role="status"></p>
+          <div class="suggestions" id="tags-suggestions" aria-label="Temas frecuentes"></div>
+        </div>
+
+        <div class="actions">
+          <label class="count">
+            <span>Mostrar</span>
+            <select id="limit" name="limit">
+              <option value="5">5</option>
+              <option value="10" selected>10</option>
+              <option value="20">20</option>
+            </select>
+            <span>juegos</span>
+          </label>
+          <button class="btn btn-primary" type="submit" id="submit">Recomendar</button>
+        </div>
+      </form>
+    </section>
+    </div>
+
+    <section class="results-section wrap" id="results-section" aria-labelledby="results-title" hidden>
+      <div class="results-head">
+        <h2 id="results-title">Recomendados para ti</h2>
+        <p class="results-summary" id="results-summary"></p>
       </div>
-
-      <section id="mode-games">
-        <label for="game-1">Hasta 3 juegos que te gusten</label>
-        <input type="text" id="game-1" list="titles" placeholder="Ej: Hollow Knight" autocomplete="off">
-        <input type="text" id="game-2" list="titles" placeholder="Ej: Celeste" autocomplete="off">
-        <input type="text" id="game-3" list="titles" placeholder="Ej: Hades" autocomplete="off">
-        <datalist id="titles"></datalist>
-      </section>
-
-      <section id="mode-tags" hidden>
-        <label for="tags">Géneros, temas o mecánicas (separados por coma)</label>
-        <input type="text" id="tags" placeholder="Ej: roguelike, horror, puzzle" autocomplete="off">
-        <div class="chips" id="tag-chips"></div>
-      </section>
-
-      <div class="row">
-        <label for="limit">Resultados</label>
-        <select id="limit">
-          <option>5</option>
-          <option selected>10</option>
-          <option>20</option>
-        </select>
-        <button class="primary" type="submit" id="submit">Recomendar</button>
+      <p class="status" id="status" role="status" aria-live="polite"></p>
+      <div class="notice" id="notice" role="alert" hidden>
+        <p id="notice-text"></p>
+        <div class="notice-actions" id="notice-actions"></div>
       </div>
-    </form>
+      <div class="scale" id="scale" hidden>
+        <ul class="scale-levels" aria-label="Niveles de parecido">
+          <li><span class="pips" data-level="3" aria-hidden="true"><i></i><i></i><i></i></span>Muy parecido</li>
+          <li><span class="pips" data-level="2" aria-hidden="true"><i></i><i></i><i></i></span>Parecido</li>
+          <li><span class="pips" data-level="1" aria-hidden="true"><i></i><i></i><i></i></span>Algo en común</li>
+        </ul>
+        <p id="scale-note"></p>
+      </div>
+      <ol class="results" id="results" aria-labelledby="results-title"></ol>
+      <p class="votes-note" id="votes-note" hidden>
+        <svg class="icon" aria-hidden="true"><use href="#i-up"/></svg>
+        <svg class="icon" aria-hidden="true"><use href="#i-down"/></svg>
+        <span>Con los pulgares nos dices si un juego te interesa. Tu voto se guarda con un seudónimo, no con tu alias, y sirve para medir si las recomendaciones aciertan. No cambia esta lista.</span>
+      </p>
+      <p class="price-note" id="price-note" hidden></p>
+    </section>
 
-    <p class="status" id="status" role="status"></p>
-    <ol class="results" id="results"></ol>
+    <section class="how wrap" id="como-funciona" aria-labelledby="how-title">
+      <h2 id="how-title">Cómo elegimos tus juegos</h2>
+      <ol class="steps">
+        <li>
+          <h3>Leemos cada juego</h3>
+          <p>De cada juego indie tomamos su descripción, sus géneros, sus temas y sus palabras clave. Los datos vienen de IGDB.</p>
+        </li>
+        <li>
+          <h3>Armamos tu gusto</h3>
+          <p>Juntamos lo que tienen en común los juegos que elegiste, o los temas que escribiste. No miramos popularidad ni publicidad.</p>
+        </li>
+        <li>
+          <h3>Buscamos los más parecidos</h3>
+          <p>Comparamos tu gusto con todo el catálogo y te mostramos los juegos que más se le parecen y que todavía no nombraste.</p>
+        </li>
+      </ol>
+      <details class="curious">
+        <summary>Para curiosos</summary>
+        <div class="curious-body">
+          <p>Cada juego se convierte en un vector: el TF-IDF de su descripción más sus géneros, temas, modos y palabras clave, marcados como 0 o 1. Tu perfil es el promedio de los vectores de tus juegos, más el de los temas que escribiste.</p>
+          <p>El parecido es la similitud de Tanimoto entre tu perfil y cada juego: va de 0 a 1 y vale más mientras más comparten. Los niveles «Muy parecido», «Parecido» y «Algo en común» son cortes fijos sobre ese número.</p>
+          <p class="live-stats" id="live-stats" hidden>
+            El catálogo tiene <strong id="stat-size">–</strong> juegos indie y lo recorre <strong id="stat-engine">–</strong>.
+            <span id="stat-latency-wrap" hidden>El 95 % de las últimas búsquedas respondió en <strong id="stat-latency">–</strong> o menos (p95).</span>
+          </p>
+        </div>
+      </details>
+    </section>
   </main>
 
-  <footer>
-    <span id="engine">GameMatch</span> · Datos de juegos de IGDB ·
-    <a href="/docs">API</a>
+  <footer class="footer wrap">
+    <p>Datos de juegos: <a href="https://www.igdb.com/" rel="noopener noreferrer">IGDB</a>.</p>
+    <p>GameMatch, proyecto del curso DevOps (Sec/ML), UDD.</p>
+    <p><a href="/docs">Documentación de la API</a></p>
   </footer>
 
-  <dialog id="session-dialog" aria-labelledby="session-title">
-    <form id="session-form">
-      <h2 id="session-title">Tu cuenta</h2>
-      <p class="hint" id="session-hint">Solo necesitas un alias y una contraseña.</p>
-      <label for="session-alias">Alias (no uses tu nombre real)</label>
-      <input type="text" id="session-alias" autocomplete="username" required>
-      <label for="session-password">Contraseña (de 12 a 128 caracteres)</label>
-      <input type="password" id="session-password" autocomplete="current-password" required>
-      <div class="actions">
-        <button class="primary" type="submit" value="login">Entrar</button>
-        <button class="secondary" type="submit" value="register">Crear cuenta</button>
+  <dialog class="account" id="session-dialog" aria-labelledby="session-title">
+    <form id="session-form" method="dialog" novalidate>
+      <div class="account-head">
+        <h2 id="session-title">Entrar a GameMatch</h2>
+        <button type="button" class="icon-btn" id="session-cancel" aria-label="Cerrar">
+          <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+        </button>
       </div>
-      <p class="dialog-error" id="session-error" role="alert"></p>
-      <button type="button" class="link" id="session-cancel">Cancelar</button>
+      <p class="account-hint" id="session-hint">Solo pedimos un alias y una contraseña.</p>
+
+      <div class="account-switch" role="group" aria-label="Tipo de acceso">
+        <button type="button" aria-pressed="true" data-auth="login">Ya tengo cuenta</button>
+        <button type="button" aria-pressed="false" data-auth="register">Crear cuenta</button>
+      </div>
+
+      <div class="field">
+        <label for="session-alias">Alias</label>
+        <input type="text" id="session-alias" name="alias" autocomplete="username" spellcheck="false" required
+               aria-describedby="alias-help">
+        <p class="field-help" id="alias-help">De 3 a 30 letras, números, - o _. No uses tu nombre real.</p>
+      </div>
+      <div class="field">
+        <label for="session-password">Contraseña</label>
+        <input type="password" id="session-password" name="password" autocomplete="current-password" required
+               aria-describedby="password-help">
+        <p class="field-help" id="password-help">Entre 12 y 128 caracteres.</p>
+      </div>
+
+      <p class="form-error" id="session-error" role="alert"></p>
+      <button class="btn btn-primary btn-block" type="submit" id="session-submit">Entrar</button>
     </form>
   </dialog>
 
+  <template id="token-tpl">
+    <span class="token"><span class="token-text" translate="no"></span><button type="button" class="token-remove"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button></span>
+  </template>
+
   <template id="card-tpl">
     <li class="card">
-      <span class="rank"></span>
-      <div>
-        <div class="title"></div>
-        <div class="bar"><div></div></div>
-        <span class="score"></span>
-      </div>
-      <div class="votes">
-        <button type="button" data-vote="1" aria-pressed="false" title="Me interesa">👍</button>
-        <button type="button" data-vote="-1" aria-pressed="false" title="No me interesa">👎</button>
+      <a class="card-cover" target="_blank" rel="noopener noreferrer" tabindex="-1">
+        <img class="cover-img" width="264" height="374" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="">
+        <span class="cover-fallback" aria-hidden="true"></span>
+        <span class="card-rank" aria-hidden="true"></span>
+      </a>
+      <div class="card-body">
+        <h3 class="card-title" translate="no"></h3>
+        <p class="card-meta"><span class="card-year"></span> <span class="card-genres"></span></p>
+        <p class="card-match"><span class="pips" aria-hidden="true"><i></i><i></i><i></i></span><span class="match-label"></span></p>
+        <p class="card-common"><span class="common-label">En común:</span> <span class="common-list"></span></p>
+        <div class="card-foot">
+          <a class="card-store" target="_blank" rel="noopener noreferrer">
+            <span class="store-price"></span><span class="store-name"></span>
+          </a>
+          <div class="votes">
+            <button type="button" class="icon-btn vote" data-vote="1" aria-pressed="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-up"/></svg>
+            </button>
+            <button type="button" class="icon-btn vote" data-vote="-1" aria-pressed="false">
+              <svg class="icon" aria-hidden="true"><use href="#i-down"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
     </li>
   </template>
 
-  <script>
-    const $ = (id) => document.getElementById(id);
-    let mode = "games";
+  <template id="skeleton-tpl">
+    <li class="card is-skeleton" aria-hidden="true">
+      <span class="card-cover bone"></span>
+      <div class="card-body">
+        <span class="bone bone-title"></span>
+        <span class="bone bone-meta"></span>
+        <span class="bone bone-match"></span>
+      </div>
+    </li>
+  </template>
 
-    // El token vive solo en esta variable: no se guarda en el navegador y recargar cierra la sesión.
-    let token = null;
-    let pendingVote = null;
-
-    function setStatus(text, isError = false) {
-      $("status").textContent = text;
-      $("status").classList.toggle("error", isError);
-    }
-
-    function showSession(alias) {
-      $("session-label").textContent = alias ? `Sesión: ${alias}` : "Sin sesión";
-      $("session-button").textContent = alias ? "Salir" : "Iniciar sesión";
-    }
-
-    function logout() {
-      token = null;
-      showSession(null);
-    }
-
-    function openSessionDialog(hint) {
-      $("session-hint").textContent = hint;
-      $("session-error").textContent = "";
-      $("session-dialog").showModal();
-    }
-
-    async function postJson(path, body) {
-      return fetch(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-    }
-
-    async function login(alias, password) {
-      const resp = await postJson("/auth/login", { alias, password });
-      if (!resp.ok) {
-        throw new Error(resp.status === 503 ? "El servicio de cuentas no está disponible." : "Alias o contraseña incorrectos.");
-      }
-      token = (await resp.json()).access_token;
-      showSession(alias);
-    }
-
-    async function register(alias, password) {
-      const resp = await postJson("/auth/register", { alias, password });
-      if (resp.status === 409) throw new Error("Ese alias no está disponible.");
-      if (resp.status === 422) {
-        throw new Error("Usa un alias de 3 a 30 letras, números, - o _, y una contraseña de 12 a 128 caracteres.");
-      }
-      if (!resp.ok) throw new Error("No se pudo crear la cuenta.");
-      await login(alias, password);
-    }
-
-    $("session-button").addEventListener("click", () => {
-      if (token) logout();
-      else openSessionDialog("Solo necesitas un alias y una contraseña.");
-    });
-
-    $("session-cancel").addEventListener("click", () => {
-      pendingVote = null;
-      $("session-dialog").close();
-    });
-
-    // Cerrar con Esc también descarta el voto: no debe enviarse en un login posterior.
-    $("session-dialog").addEventListener("cancel", () => {
-      pendingVote = null;
-    });
-
-    $("session-form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const alias = $("session-alias").value.trim();
-      const password = $("session-password").value;
-      try {
-        await (event.submitter.value === "register" ? register(alias, password) : login(alias, password));
-      } catch (error) {
-        $("session-error").textContent = error.message;
-        return;
-      }
-      $("session-password").value = "";
-      $("session-dialog").close();
-      if (pendingVote) {
-        const { game, vote, card } = pendingVote;
-        pendingVote = null;
-        sendVote(game, vote, card);
-      }
-    });
-
-    // Pestañas: juegos o tags
-    document.querySelectorAll("[role=tab]").forEach((tab) => {
-      tab.addEventListener("click", () => {
-        mode = tab.dataset.mode;
-        document.querySelectorAll("[role=tab]").forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
-        $("mode-games").hidden = mode !== "games";
-        $("mode-tags").hidden = mode !== "tags";
-      });
-    });
-
-    // Catálogo para autocompletar títulos y sugerir los tags más comunes (/games pagina de a 500)
-    async function loadCatalog() {
-      const titles = [];
-      const tagCount = new Map();
-      for (let offset = 0; ; offset += 500) {
-        const resp = await fetch(`/games?limit=500&offset=${offset}`);
-        if (!resp.ok) break;
-        const page = await resp.json();
-        for (const game of page) {
-          titles.push(game.title);
-          for (const tag of game.tags) tagCount.set(tag, (tagCount.get(tag) || 0) + 1);
-        }
-        if (page.length < 500) break;
-      }
-      const list = $("titles");
-      for (const title of titles) {
-        const opt = document.createElement("option");
-        opt.value = title;
-        list.appendChild(opt);
-      }
-      const top = [...tagCount.entries()].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([t]) => t);
-      for (const tag of top) {
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "chip";
-        chip.textContent = tag;
-        chip.setAttribute("aria-pressed", "false");
-        chip.addEventListener("click", () => toggleTag(tag, chip));
-        $("tag-chips").appendChild(chip);
-      }
-    }
-
-    function currentTags() {
-      return $("tags").value.split(",").map((t) => t.trim()).filter(Boolean);
-    }
-
-    function toggleTag(tag, chip) {
-      const tags = currentTags();
-      const i = tags.findIndex((t) => t.toLowerCase() === tag.toLowerCase());
-      if (i >= 0) tags.splice(i, 1);
-      else tags.push(tag);
-      $("tags").value = tags.join(", ");
-      chip.setAttribute("aria-pressed", String(i < 0));
-    }
-
-    async function loadEngine() {
-      try {
-        const stats = await (await fetch("/stats")).json();
-        const engine = stats.recommender === "ml" ? "modelo de ML" : "similitud de tags";
-        $("engine").textContent = `GameMatch · ${stats.catalog_size} juegos · ${engine}`;
-      } catch {
-        // El pie de página es informativo: si /stats falla, se deja el texto por defecto.
-      }
-    }
-
-    function renderResults(items) {
-      const list = $("results");
-      list.replaceChildren();
-      const best = Math.max(...items.map((r) => r.score), 0.001);
-      items.forEach((rec, i) => {
-        const card = $("card-tpl").content.firstElementChild.cloneNode(true);
-        card.querySelector(".rank").textContent = i + 1;
-        card.querySelector(".title").textContent = rec.title;
-        card.querySelector(".bar > div").style.width = `${Math.round((rec.score / best) * 100)}%`;
-        card.querySelector(".score").textContent = `Similitud ${rec.score.toFixed(3)}`;
-        card.querySelectorAll("[data-vote]").forEach((btn) => {
-          btn.addEventListener("click", () => sendVote(rec.title, Number(btn.dataset.vote), card));
-        });
-        list.appendChild(card);
-      });
-    }
-
-    async function sendVote(game, vote, card) {
-      if (!token) {
-        pendingVote = { game, vote, card };
-        openSessionDialog("Inicia sesión o crea una cuenta para votar.");
-        return;
-      }
-      const resp = await fetch("/feedback", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ game, vote }),
-      });
-      if (resp.status === 401) {
-        logout();
-        pendingVote = { game, vote, card };
-        openSessionDialog("Tu sesión venció. Vuelve a entrar para votar.");
-        return;
-      }
-      if (!resp.ok) {
-        setStatus(resp.status === 403 ? "Tu cuenta no tiene permiso para votar." : "No se pudo guardar tu voto.", true);
-        return;
-      }
-      card.querySelectorAll("[data-vote]").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.vote) === vote)));
-    }
-
-    $("form").addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const body = {
-        liked_games: mode === "games" ? ["game-1", "game-2", "game-3"].map((id) => $(id).value.trim()).filter(Boolean) : [],
-        tags: mode === "tags" ? currentTags() : [],
-        limit: Number($("limit").value),
-      };
-      if (!body.liked_games.length && !body.tags.length) {
-        setStatus(mode === "games" ? "Escribe al menos un juego." : "Escribe al menos un género o tema.", true);
-        return;
-      }
-      $("submit").disabled = true;
-      setStatus("Buscando…");
-      try {
-        const resp = await fetch("/recommendations", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const data = await resp.json();
-        if (!resp.ok) {
-          $("results").replaceChildren();
-          setStatus(resp.status === 400 ? "No reconocimos esos juegos o tags. Prueba con otros." : "Algo salió mal al recomendar.", true);
-          return;
-        }
-        renderResults(data);
-        setStatus(data.length ? `${data.length} recomendaciones` : "No encontramos juegos parecidos.");
-      } catch {
-        setStatus("No se pudo conectar con la API.", true);
-      } finally {
-        $("submit").disabled = false;
-      }
-    });
-
-    loadCatalog();
-    loadEngine();
-  </script>
+  <script src="/static/app.js" defer></script>
+  <script type="module" src="/static/hero.js"></script>
 </body>
 </html>

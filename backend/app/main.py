@@ -1,5 +1,6 @@
 """API de GameMatch."""
 
+import mimetypes
 import sqlite3
 import time
 from collections import deque
@@ -10,6 +11,7 @@ from typing import Literal
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.admin import router as admin_router
@@ -45,7 +47,13 @@ app.include_router(me_router)
 app.include_router(admin_router)
 app.include_router(reports_router)
 
-INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+INDEX_HTML = STATIC_DIR / "index.html"
+# Hoja de estilos, scripts y fuentes de la página, auto-alojados. Lo externo son las portadas, que el
+# navegador pide a images.igdb.com, y la librería de animación del titular (GSAP, desde cdn.jsdelivr.net).
+# Windows y las imágenes slim no siempre conocen .woff2: sin esto, las fuentes salen como octet-stream.
+mimetypes.add_type("font/woff2", ".woff2")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class RecommendationRequest(BaseModel):
@@ -59,6 +67,15 @@ class RecommendationRequest(BaseModel):
 class Recommendation(BaseModel):
     title: str
     score: float
+    year: int | None = None
+    genres: list[str] = Field(default_factory=list)
+    themes: list[str] = Field(default_factory=list)
+    modes: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list, description="Etiquetas que el juego comparte con tu perfil")
+    cover_id: str | None = Field(default=None, description="image_id de la portada en IGDB")
+    url: str | None = Field(default=None, description="Ficha del juego en IGDB")
+    store_url: str | None = Field(default=None, description="Página del juego en Steam")
+    price: int | None = Field(default=None, description="Precio base en Steam, en la moneda que informa /stats")
 
 
 class Feedback(BaseModel):
@@ -96,7 +113,10 @@ def list_games(limit: int = Query(default=50, ge=1, le=500), offset: int = Query
     model = get_model()
     if model is not None:
         return model.list_games(limit, offset)
-    return [{"title": g["title"], "tags": sorted(g["tags"])} for g in CATALOG[offset : offset + limit]]
+    return [
+        {"title": g["title"], "tags": sorted(g["tags"]), "year": None, "cover_id": None}
+        for g in CATALOG[offset : offset + limit]
+    ]
 
 
 @app.post("/recommendations", response_model=list[Recommendation])
@@ -127,6 +147,11 @@ def stats() -> dict:
             "requests": len(latencies),
             "p50": round(float(np.percentile(latencies, 50)), 1) if latencies else None,
             "p95": round(float(np.percentile(latencies, 95)), 1) if latencies else None,
+        },
+        # De cuándo y en qué moneda son los precios que acompañan a las recomendaciones.
+        "prices": {
+            "currency": model.media.currency if model is not None else None,
+            "as_of": model.media.fetched_on if model is not None else None,
         },
     }
     return info

@@ -14,9 +14,12 @@ from app.crypto import (
 
 
 def test_seudonimo_es_estable_y_no_contiene_el_id():
-    assert pseudonymize("abc") == pseudonymize("abc")
-    assert "abc" not in pseudonymize("abc")
-    assert len(pseudonymize("abc")) == 64
+    # El id lleva letras que no existen en hexadecimal: con "abc", el hash de una clave aleatoria
+    # contenía "abc" por azar en ~1,5 % de las corridas y la prueba fallaba sin motivo.
+    user_id = "usuario-xyz"
+    assert pseudonymize(user_id) == pseudonymize(user_id)
+    assert user_id not in pseudonymize(user_id)
+    assert len(pseudonymize(user_id)) == 64
 
 
 def test_seudonimo_cambia_con_la_clave(monkeypatch):

@@ -37,8 +37,21 @@ def recommend_jaccard(liked_games: list[str], tags: list[str] | None = None, lim
         raise ValueError("Se necesita al menos un juego conocido o un tag de interés")
 
     liked_titles = {g["title"] for g in liked}
+    # Mismo formato que el modelo de ML; el catálogo manual no tiene año ni separa géneros, temas y modos.
     scored = [
-        {"title": g["title"], "score": round(jaccard(profile, g["tags"]), 3)}
+        {
+            "title": g["title"],
+            "score": round(jaccard(profile, g["tags"]), 3),
+            "year": None,
+            "genres": sorted(g["tags"]),
+            "themes": [],
+            "modes": [],
+            "reasons": sorted(profile & g["tags"])[:3],
+            "cover_id": None,
+            "url": None,
+            "store_url": None,
+            "price": None,
+        }
         for g in CATALOG
         if g["title"] not in liked_titles
     ]
