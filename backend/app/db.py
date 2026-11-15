@@ -20,6 +20,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "rights:request",
         "requests:read",
         "requests:manage",
+        "alerts:read",
+        "alerts:manage",
         "me:read",
         "me:update",
         "reports:read",
@@ -80,7 +82,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   created_on TEXT NOT NULL,
   is_child INTEGER NOT NULL DEFAULT 0,
   pending_guardian INTEGER NOT NULL DEFAULT 0,
-  legal_hold INTEGER NOT NULL DEFAULT 0
+  legal_hold INTEGER NOT NULL DEFAULT 0,
+  tokens_not_before REAL                  -- los tokens emitidos antes dejan de valer (contención)
 );
 CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY,
@@ -97,12 +100,31 @@ CREATE TABLE IF NOT EXISTS audit_log (
   action TEXT NOT NULL,
   target_pseudonym TEXT,
   outcome TEXT NOT NULL CHECK (outcome IN ('permitido', 'denegado')),
-  detail TEXT                             -- qué campos o motivo, nunca valores personales
+  detail TEXT,                            -- qué campos o motivo, nunca valores personales
+  event_id TEXT,                          -- UUID para citar el evento en un informe de incidente
+  resource TEXT,                          -- recurso por referencia: consent:<finalidad>, request:<uuid>, account
+  prev_hash TEXT,
+  hash TEXT                               -- HMAC-SHA256(GM_AUDIT_KEY, prev_hash | campos)
 );
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit_log es de solo inserción'); END;
-CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_log
-BEGIN SELECT RAISE(ABORT, 'audit_log es de solo inserción'); END;
+DROP TRIGGER IF EXISTS audit_no_delete;
+CREATE TRIGGER IF NOT EXISTS audit_delete_retention BEFORE DELETE ON audit_log
+WHEN julianday(OLD.ts) > julianday('now', '-365 days')
+BEGIN SELECT RAISE(ABORT, 'audit_log es de solo inserción: solo se borran filas de más de 365 días'); END;
+CREATE TABLE IF NOT EXISTS security_alerts (
+  id INTEGER PRIMARY KEY,
+  ts TEXT NOT NULL,
+  rule TEXT NOT NULL,
+  severity TEXT NOT NULL CHECK (severity IN ('media', 'alta', 'critica')),
+  subject TEXT,                           -- seudónimo afectado, si aplica
+  status TEXT NOT NULL DEFAULT 'abierta'
+    CHECK (status IN ('abierta', 'en_analisis', 'descartada', 'incidente'))
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS consent_purposes (
   code TEXT PRIMARY KEY,
   version TEXT NOT NULL,
@@ -128,9 +150,10 @@ CREATE TABLE IF NOT EXISTS consent_events (
 CREATE INDEX IF NOT EXISTS consent_events_subject ON consent_events (subject, purpose, id);
 CREATE TRIGGER IF NOT EXISTS consent_no_update BEFORE UPDATE ON consent_events
 BEGIN SELECT RAISE(ABORT, 'consent_events es de solo inserción'); END;
-CREATE TRIGGER IF NOT EXISTS consent_no_delete BEFORE DELETE ON consent_events
-WHEN old.ts > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-365 days')
-BEGIN SELECT RAISE(ABORT, 'consent_events se conserva 365 días'); END;
+DROP TRIGGER IF EXISTS consent_no_delete;
+CREATE TRIGGER IF NOT EXISTS consent_delete_retention BEFORE DELETE ON consent_events
+WHEN julianday(OLD.ts) > julianday('now', '-365 days')
+BEGIN SELECT RAISE(ABORT, 'consent_events es de solo inserción: solo se borran eventos de más de 365 días'); END;
 CREATE TABLE IF NOT EXISTS rights_requests (
   id TEXT PRIMARY KEY,
   subject TEXT NOT NULL,                  -- seudónimo del titular, sin clave foránea: sobrevive a la supresión
@@ -160,9 +183,14 @@ _ADDED_COLUMNS = {
         "is_child": "INTEGER NOT NULL DEFAULT 0",
         "pending_guardian": "INTEGER NOT NULL DEFAULT 0",
         "legal_hold": "INTEGER NOT NULL DEFAULT 0",
+        "tokens_not_before": "REAL",
     },
     "audit_log": {
         "detail": "TEXT",
+        "event_id": "TEXT",
+        "resource": "TEXT",
+        "prev_hash": "TEXT",
+        "hash": "TEXT",
     },
 }
 
@@ -265,5 +293,29 @@ def save_vote(pseudonym: str, game: str, vote: int) -> None:
     try:
         with conn:
             upsert_vote(conn, pseudonym, game, vote, today)
+    finally:
+        conn.close()
+
+
+def get_setting(conn: sqlite3.Connection, key: str) -> str | None:
+    row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: str | None) -> None:
+    if value is None:
+        conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+    else:
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
+
+def is_read_only() -> bool:
+    """Modo solo lectura del plan de incidentes. Se lee de la base en cada escritura: rige de inmediato."""
+    conn = connect()
+    try:
+        return get_setting(conn, "read_only") == "1"
     finally:
         conn.close()

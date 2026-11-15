@@ -67,8 +67,14 @@ def _now() -> dt.datetime:
 
 def create_token(account_id: str) -> str:
     now = _now()
-    claims = {"sub": account_id, "iat": now, "exp": now + dt.timedelta(minutes=TOKEN_MINUTES)}
+    claims = {"sub": account_id, "iat": now.timestamp(), "exp": now + dt.timedelta(minutes=TOKEN_MINUTES)}
     return jwt.encode(claims, get_key("GM_JWT_SECRET"), algorithm="HS256")
+
+
+def decode_claims(token: str) -> dict:
+    """Valida firma, algoritmo y vencimiento. Lanza jwt.InvalidTokenError."""
+    return jwt.decode(token, get_key("GM_JWT_SECRET"), algorithms=["HS256"],
+                      options={"require": ["exp", "sub", "iat"]})
 
 
 def decode_token(token: str) -> str:
@@ -154,15 +160,21 @@ def current_account(credentials: HTTPAuthorizationCredentials | None) -> sqlite3
     if credentials is None:
         return None
     try:
-        account_id = decode_token(credentials.credentials)
+        claims = decode_claims(credentials.credentials)
     except jwt.InvalidTokenError:
         return None
     with closing(connect()) as conn:
-        return conn.execute(
+        account = conn.execute(
             """SELECT a.*, r.name AS role FROM accounts a JOIN roles r ON r.id = a.role_id
                WHERE a.id = ? AND a.is_active = 1 AND a.pending_guardian = 0""",
-            (account_id,),
+            (claims["sub"],),
         ).fetchone()
+        global_cutoff = conn.execute("SELECT value FROM settings WHERE key = 'tokens_not_before'").fetchone()
+    if account is None:
+        return None
+    # Contención: un token emitido antes de una revocación (de la cuenta o de todas) ya no vale.
+    cutoff = max(account["tokens_not_before"] or 0, float(global_cutoff["value"]) if global_cutoff else 0)
+    return account if float(claims["iat"]) >= cutoff else None
 
 
 def _has_permission(account: sqlite3.Row, code: str) -> bool:
@@ -238,5 +250,11 @@ def register(req: RegisterRequest) -> dict:
 def login(req: LoginRequest) -> dict:
     account_id = _authenticate(req.alias, req.password)
     if account_id is None:
+        with closing(connect()) as conn:
+            known = conn.execute("SELECT id FROM accounts WHERE alias = ?", (req.alias,)).fetchone()
+        # Se audita el seudónimo de la cuenta atacada, nunca el alias escrito ni la contraseña.
+        record("auth:login", "denegado", target_id=known["id"] if known else None, resource="account")
         raise HTTPException(status_code=401, detail=INVALID_CREDENTIALS)
-    return {"access_token": create_token(account_id), "token_type": "bearer"}
+    token = create_token(account_id)
+    record("auth:login", "permitido", actor_id=account_id, resource="account")
+    return {"access_token": token, "token_type": "bearer"}

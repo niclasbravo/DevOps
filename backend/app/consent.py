@@ -136,13 +136,13 @@ def read_my_consent_history(account: sqlite3.Row = Depends(require_permission("c
 def grant_consent(purpose: Purpose, account: sqlite3.Row = Depends(require_permission("consent:manage"))) -> dict:
     if account["is_child"]:
         # Art. 16 quáter, Ley 21.719: bajo 14 años consiente el representante, no la persona.
-        record("consent:grant", "denegado", actor_id=account["id"])
+        record("consent:grant", "denegado", actor_id=account["id"], resource=f"consent:{purpose}")
         raise HTTPException(status_code=403, detail="Esta finalidad la autoriza tu representante legal")
     subject = pseudonymize(account["id"])
     with write_transaction() as conn:
         changed = grant(conn, subject, purpose, "titular")
         if changed:
-            record("consent:grant", "permitido", actor_id=account["id"], conn=conn)
+            record("consent:grant", "permitido", actor_id=account["id"], conn=conn, resource=f"consent:{purpose}")
     return {"finalidad": purpose, "estado": "otorgado"}
 
 
@@ -154,7 +154,7 @@ def revoke_consent(purpose: Purpose, account: sqlite3.Row = Depends(require_perm
         changed = revoke(conn, subject, purpose, "titular")
         if changed:
             apply_revocation_effects(conn, account["id"], purpose)
-            record("consent:revoke", "permitido", actor_id=account["id"], conn=conn)
+            record("consent:revoke", "permitido", actor_id=account["id"], conn=conn, resource=f"consent:{purpose}")
     return {"finalidad": purpose, "estado": "revocado"}
 
 

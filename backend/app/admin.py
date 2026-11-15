@@ -119,12 +119,13 @@ def reveal_email(account_id: str, admin: sqlite3.Row = Depends(require_permissio
 def read_audit(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
-    _: sqlite3.Row = Depends(require_permission("audit:read")),
+    admin: sqlite3.Row = Depends(require_permission("audit:read")),
 ) -> list[dict]:
     with closing(connect()) as conn:
         rows = conn.execute(
-            """SELECT ts, actor_pseudonym, action, target_pseudonym, outcome FROM audit_log
+            """SELECT event_id, ts, actor_pseudonym, action, resource, target_pseudonym, outcome, detail FROM audit_log
                ORDER BY id DESC LIMIT ? OFFSET ?""",
             (limit, offset),
         ).fetchall()
+    record("audit:read", "permitido", actor_id=admin["id"], resource="audit_log")
     return [dict(row) for row in rows]

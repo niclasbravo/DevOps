@@ -62,7 +62,7 @@ def make_raw_games() -> pd.DataFrame:
 @pytest.fixture(autouse=True)
 def entorno_seguro(monkeypatch, tmp_path):
     """Cada prueba corre con claves nuevas y una base propia: nunca con datos ni secretos reales."""
-    for name in ("GM_PSEUDONYM_KEY", "GM_EMAIL_KEY", "GM_JWT_SECRET"):
+    for name in ("GM_PSEUDONYM_KEY", "GM_EMAIL_KEY", "GM_JWT_SECRET", "GM_AUDIT_KEY"):
         monkeypatch.setenv(name, secrets.token_urlsafe(48))
     monkeypatch.setenv("GM_DB_PATH", str(tmp_path / "gamematch.db"))
     monkeypatch.setenv("GM_OUTBOX_DIR", str(tmp_path / "outbox"))  # buzón simulado, propio de cada prueba
