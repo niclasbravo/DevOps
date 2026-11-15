@@ -18,9 +18,11 @@ from app.admin import router as admin_router
 from app.auth import require_permission
 from app.auth import router as auth_router
 from app.catalog import CATALOG
+from app.consent import router as consent_router
 from app.crypto import pseudonymize
 from app.db import init_db, save_vote
 from app.errors import register_error_handlers
+from app.guardian import router as guardian_router
 from app.logging_safe import configure_logging
 from app.me import router as me_router
 from app.model import get_model
@@ -46,6 +48,8 @@ app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(admin_router)
 app.include_router(reports_router)
+app.include_router(consent_router)
+app.include_router(guardian_router)
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 INDEX_HTML = STATIC_DIR / "index.html"
@@ -54,6 +58,7 @@ INDEX_HTML = STATIC_DIR / "index.html"
 # Windows y las imágenes slim no siempre conocen .woff2: sin esto, las fuentes salen como octet-stream.
 mimetypes.add_type("font/woff2", ".woff2")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+GUARDIAN_HTML = STATIC_DIR / "guardian.html"
 
 
 class RecommendationRequest(BaseModel):
@@ -101,6 +106,12 @@ async def measure_latency(request: Request, call_next):
 def index() -> FileResponse:
     """Página web mínima que consume la API."""
     return FileResponse(INDEX_HTML, media_type="text/html")
+
+
+@app.get("/guardian.html", include_in_schema=False)
+def guardian_page() -> FileResponse:
+    """Página donde el representante legal confirma la cuenta de un menor de 14 años."""
+    return FileResponse(GUARDIAN_HTML, media_type="text/html")
 
 
 @app.get("/health")

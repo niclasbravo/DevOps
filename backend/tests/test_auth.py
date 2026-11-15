@@ -35,7 +35,7 @@ def _cuenta(alias: str = "nico"):
 def test_registro_crea_usuario_con_hash_y_solo_fecha():
     resp = _registrar()
     assert resp.status_code == 201
-    assert resp.json() == {"alias": "nico"}
+    assert resp.json() == {"alias": "nico", "estado": "activa"}
     cuenta = _cuenta()
     assert cuenta["role"] == "usuario"
     assert cuenta["password_hash"].startswith("$argon2id$")
@@ -52,7 +52,7 @@ def test_registro_rechaza_campos_personales_extra():
 
 
 def test_correo_opcional_queda_cifrado():
-    assert _registrar(email="persona@example.com").status_code == 201
+    assert _registrar(email="persona@example.com", consents=["correo_recuperacion"]).status_code == 201
     guardado = _cuenta()["email_encrypted"]
     assert b"persona" not in guardado
     assert decrypt_email(guardado) == "persona@example.com"
@@ -247,6 +247,7 @@ def test_patch_me_cambia_la_contrasena(nueva_cuenta):
 
 def test_patch_me_guarda_y_borra_el_correo(nueva_cuenta):
     _, headers = nueva_cuenta()
+    client.post("/me/consents/correo_recuperacion", headers=headers)
     client.patch("/me", headers=headers, json={"current_password": CLAVE, "email": "persona@example.com"})
     assert client.get("/me", headers=headers).json()["has_email"] is True
     client.patch("/me", headers=headers, json={"current_password": CLAVE, "email": None})

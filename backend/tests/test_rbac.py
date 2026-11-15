@@ -38,6 +38,11 @@ MATRIZ = [
     *_todos("GET", "/games", 200),
     *_todos("GET", "/stats", 200),
     *_todos("POST", "/recommendations", 200),
+    *_todos("GET", "/consents/purposes", 200),
+    *_protegida("GET", "/me/consents", 200, 200, 200),
+    *_protegida("GET", "/me/consents/history", 200, 200, 200),
+    *_protegida("POST", "/me/consents/votos_analitica", 200, 200, 200),
+    *_protegida("DELETE", "/me/consents/votos_analitica", 200, 200, 200),
     *_protegida("GET", "/me", 200, 200, 200),
     *_protegida("GET", "/me/feedback", 200, 200, 200),
     *_protegida("GET", "/reports/feedback", 403, 200, 200),
@@ -82,10 +87,11 @@ def test_matriz_rbac(cuentas, nueva_cuenta, rol, metodo, ruta, esperado):
 
 def test_todo_endpoint_figura_en_la_matriz():
     """Un método o una ruta nueva sin fila en la matriz hace fallar esta prueba."""
-    publicas = {("POST", "/auth/register"), ("POST", "/auth/login")}
+    # /guardian/confirm es pública pero exige un token de un solo uso: la cubre test_menores.py.
+    publicas = {("POST", "/auth/register"), ("POST", "/auth/login"), ("POST", "/guardian/confirm")}
     cubiertas = {(fila[1], fila[2]) for fila in MATRIZ} | publicas
     rutas = {
-        (metodo.upper(), ruta.replace("{account_id}", "{id}"))
+        (metodo.upper(), ruta.replace("{account_id}", "{id}").replace("{purpose}", "votos_analitica"))
         for ruta, operaciones in app.openapi()["paths"].items()
         for metodo in operaciones
     }

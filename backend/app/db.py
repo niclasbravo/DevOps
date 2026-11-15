@@ -13,9 +13,10 @@ from contextlib import contextmanager
 from pathlib import Path
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "usuario": {"feedback:write", "me:read", "me:update", "me:delete"},
-    "analista": {"me:read", "me:update", "me:delete", "reports:read"},
+    "usuario": {"feedback:write", "me:read", "me:update", "me:delete", "consent:manage"},
+    "analista": {"me:read", "me:update", "me:delete", "reports:read", "consent:manage"},
     "admin": {
+        "consent:manage",
         "me:read",
         "me:update",
         "me:delete",
@@ -25,6 +26,29 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "accounts:manage",
         "accounts:reveal_email",
         "audit:read",
+    },
+}
+
+# Finalidades que dependen del consentimiento. Cambiar un texto de forma material exige subir su versión:
+# los consentimientos dados a la versión anterior dejan de valer hasta que se renueven.
+PURPOSES: dict[str, dict] = {
+    "correo_recuperacion": {
+        "version": "1",
+        "text": "Guardamos tu correo cifrado solo para ayudarte a recuperar la cuenta. No lo usamos para nada más.",
+        "allowed_for_children": True,
+    },
+    "votos_analitica": {
+        "version": "1",
+        "text": (
+            "Tus votos se suman, sin identificarte, a reportes de qué juegos gustan "
+            "y a futuros reentrenamientos del modelo."
+        ),
+        "allowed_for_children": True,
+    },
+    "novedades_correo": {
+        "version": "1",
+        "text": "Te escribimos con novedades del catálogo.",
+        "allowed_for_children": False,  # comunicación comercial: no se ofrece a menores de 14
     },
 }
 
@@ -51,7 +75,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   is_active INTEGER NOT NULL DEFAULT 1,
   failed_logins INTEGER NOT NULL DEFAULT 0,
   locked_until TEXT,
-  created_on TEXT NOT NULL
+  created_on TEXT NOT NULL,
+  is_child INTEGER NOT NULL DEFAULT 0,
+  pending_guardian INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY,
@@ -73,15 +99,83 @@ CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit_log es de solo inserción'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit_log es de solo inserción'); END;
+CREATE TABLE IF NOT EXISTS consent_purposes (
+  code TEXT PRIMARY KEY,
+  version TEXT NOT NULL,
+  text TEXT NOT NULL,
+  allowed_for_children INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS consent_purpose_versions (
+  code TEXT NOT NULL REFERENCES consent_purposes(code),
+  version TEXT NOT NULL,
+  text TEXT NOT NULL,
+  published_on TEXT NOT NULL,
+  PRIMARY KEY (code, version)
+);
+CREATE TABLE IF NOT EXISTS consent_events (
+  id INTEGER PRIMARY KEY,
+  subject TEXT NOT NULL,
+  purpose TEXT NOT NULL REFERENCES consent_purposes(code),
+  text_version TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('otorgado', 'revocado')),
+  actor TEXT NOT NULL CHECK (actor IN ('titular', 'representante', 'sistema')),
+  ts TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS consent_events_subject ON consent_events (subject, purpose, id);
+CREATE TRIGGER IF NOT EXISTS consent_no_update BEFORE UPDATE ON consent_events
+BEGIN SELECT RAISE(ABORT, 'consent_events es de solo inserción'); END;
+CREATE TRIGGER IF NOT EXISTS consent_no_delete BEFORE DELETE ON consent_events
+WHEN old.ts > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-365 days')
+BEGIN SELECT RAISE(ABORT, 'consent_events se conserva 365 días'); END;
+CREATE TABLE IF NOT EXISTS guardian_verifications (
+  account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TEXT NOT NULL
+);
 """
+
+# Columnas agregadas después del Hito 2: una base existente las recibe sin perder datos.
+_ADDED_COLUMNS = {
+    "accounts": {
+        "is_child": "INTEGER NOT NULL DEFAULT 0",
+        "pending_guardian": "INTEGER NOT NULL DEFAULT 0",
+    },
+}
 
 
 def _db_path() -> Path:
     return Path(os.environ.get("GM_DB_PATH", "data/gamematch.db"))
 
 
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    for table, columns in _ADDED_COLUMNS.items():
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, definition in columns.items():
+            if name not in existing:  # nombres fijos del código, nunca de la petición
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+
+def _seed_purposes(conn: sqlite3.Connection) -> None:
+    today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    for code, purpose in PURPOSES.items():
+        conn.execute(
+            """INSERT INTO consent_purposes (code, version, text, allowed_for_children) VALUES (?, ?, ?, ?)
+               ON CONFLICT (code) DO UPDATE SET version = excluded.version, text = excluded.text,
+                 allowed_for_children = excluded.allowed_for_children""",
+            (code, purpose["version"], purpose["text"], int(purpose["allowed_for_children"])),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO consent_purpose_versions (code, version, text, published_on) VALUES (?, ?, ?, ?)",
+            (code, purpose["version"], purpose["text"], today),
+        )
+
+
 def _create_schema(conn: sqlite3.Connection) -> None:
+    # Las columnas nuevas van antes del script: un índice o trigger nuevo podría depender de ellas.
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'accounts'").fetchone():
+        _add_missing_columns(conn)
     conn.executescript(SCHEMA)
+    _seed_purposes(conn)
     for role, permissions in ROLE_PERMISSIONS.items():
         conn.execute("INSERT OR IGNORE INTO roles (name) VALUES (?)", (role,))
         for code in permissions:

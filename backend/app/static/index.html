@@ -45,6 +45,7 @@
       </nav>
       <div class="session">
         <span class="session-alias" id="session-label" hidden></span>
+        <button type="button" class="btn btn-quiet" id="privacy-button" hidden>Mi privacidad</button>
         <button type="button" class="btn btn-quiet" id="session-button">Iniciar sesión</button>
       </div>
     </div>
@@ -206,9 +207,42 @@
         <p class="field-help" id="password-help">Entre 12 y 128 caracteres.</p>
       </div>
 
+      <fieldset class="register-only" id="register-only" hidden>
+        <legend>Tu privacidad</legend>
+        <label class="check"><input type="checkbox" id="reg-child">
+          <span>Tengo menos de 14 años<small>Tu madre, padre o representante legal tendrá que confirmar la cuenta.</small></span>
+        </label>
+        <div class="field" id="reg-guardian" hidden>
+          <label for="reg-guardian-email">Correo de tu representante legal</label>
+          <input type="email" id="reg-guardian-email" autocomplete="off" aria-describedby="guardian-help">
+          <p class="field-help" id="guardian-help">Solo para enviarle el enlace de confirmación. No lo guardamos.</p>
+        </div>
+        <div id="reg-purposes">
+          <p class="field-help">Opcional. Nada viene marcado y puedes cambiarlo después en «Mi privacidad».</p>
+        </div>
+        <div class="field" id="reg-email" hidden>
+          <label for="reg-email-input">Correo para recuperar la cuenta</label>
+          <input type="email" id="reg-email-input" autocomplete="email">
+        </div>
+      </fieldset>
+
       <p class="form-error" id="session-error" role="alert"></p>
       <button class="btn btn-primary btn-block" type="submit" id="session-submit">Entrar</button>
     </form>
+  </dialog>
+
+  <dialog class="account privacy" id="privacy-dialog" aria-labelledby="privacy-title">
+    <div class="account-head">
+      <h2 id="privacy-title">Mi privacidad</h2>
+      <button type="button" class="icon-btn" id="privacy-close" aria-label="Cerrar">
+        <svg class="icon" aria-hidden="true"><use href="#i-x"/></svg>
+      </button>
+    </div>
+    <p class="account-hint">Cada finalidad se autoriza por separado. Aceptar una no autoriza las demás.</p>
+    <div id="privacy-purposes"></div>
+    <p class="form-error" id="privacy-error" role="alert"></p>
+    <h3 class="privacy-sub">Historial de consentimientos</h3>
+    <ol class="history" id="privacy-history"></ol>
   </dialog>
 
   <template id="token-tpl">

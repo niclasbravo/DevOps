@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>GameMatch · Confirmación del representante legal</title>
+  <style>
+    :root { --bg: #0f1115; --panel: #171a21; --panel-2: #1f232c; --border: #2c313c; --text: #e8eaf0;
+            --muted: #9aa1b0; --accent: #3ecf8e; --accent-ink: #062b1b; --danger: #ff6b6b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 640px; margin: 0 auto; padding: 40px 16px; }
+    h1 { margin: 0 0 4px; font-size: 1.6rem; }
+    h1 span { color: var(--accent); }
+    .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-top: 20px; }
+    p, li { color: var(--muted); }
+    .check { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0; }
+    .check input { margin-top: 4px; }
+    .check small { display: block; color: var(--muted); }
+    button { border: 0; border-radius: 8px; padding: 10px 20px; background: var(--accent); color: var(--accent-ink);
+             font: inherit; font-weight: 600; cursor: pointer; margin-top: 8px; }
+    button:disabled { opacity: 0.6; cursor: wait; }
+    .status { min-height: 1.5em; margin-top: 14px; }
+    .status.error { color: var(--danger); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Game<span>Match</span></h1>
+    <p>Confirmación de la cuenta de un menor de 14 años</p>
+
+    <section class="panel">
+      <h2>Qué datos trata GameMatch</h2>
+      <ul>
+        <li>Un alias elegido por el menor (no tiene que ser su nombre real) y una contraseña protegida.</li>
+        <li>Los votos que haga sobre juegos, guardados con un seudónimo.</li>
+        <li>No pedimos nombre, fecha de nacimiento, dirección, teléfono ni ubicación.</li>
+      </ul>
+      <p>Su correo solo se usó para enviarle este enlace y no quedó guardado.</p>
+    </section>
+
+    <form class="panel" id="form">
+      <label class="check"><input type="checkbox" id="declara" required>
+        <span>Declaro que soy padre, madre o representante legal de quien creó la cuenta y autorizo que la use.</span>
+      </label>
+      <h2>Finalidades opcionales</h2>
+      <p>Ninguna es necesaria para usar GameMatch. Puede retirarlas cuando quiera desde la cuenta.</p>
+      <div id="purposes"></div>
+      <button type="submit" id="submit">Confirmar y activar la cuenta</button>
+      <p class="status" id="status" role="status"></p>
+    </form>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    // El token llega después de "#": el navegador no lo envía al servidor ni lo deja en el historial de peticiones.
+    const token = location.hash.slice(1);
+    history.replaceState(null, "", location.pathname);
+
+    function setStatus(text, isError = false) {
+      $("status").textContent = text;
+      $("status").classList.toggle("error", isError);
+    }
+
+    async function loadPurposes() {
+      const resp = await fetch("/consents/purposes");
+      if (!resp.ok) return;
+      for (const p of await resp.json()) {
+        if (!p.allowed_for_children) continue; // las novedades comerciales no se ofrecen a menores
+        const label = document.createElement("label");
+        label.className = "check";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.name = "consent";
+        input.value = p.code;
+        const span = document.createElement("span");
+        span.textContent = p.code === "correo_recuperacion" ? "Correo para recuperar la cuenta" : "Usar sus votos en reportes y en el modelo";
+        const small = document.createElement("small");
+        small.textContent = `${p.text} (versión ${p.version})`;
+        span.appendChild(small);
+        label.append(input, span);
+        $("purposes").appendChild(label);
+      }
+    }
+
+    $("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!token) {
+        setStatus("El enlace no es válido. Use el enlace completo del correo.", true);
+        return;
+      }
+      $("submit").disabled = true;
+      const consents = [...document.querySelectorAll("input[name=consent]:checked")].map((i) => i.value);
+      try {
+        const resp = await fetch("/guardian/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, declares_legal_representative: $("declara").checked, consents }),
+        });
+        if (resp.ok) {
+          $("form").replaceChildren();
+          const done = document.createElement("p");
+          done.textContent = "Cuenta activada. Ya puede iniciar sesión en GameMatch.";
+          $("form").appendChild(done);
+          return;
+        }
+        setStatus(resp.status === 400 ? "El enlace es inválido, ya se usó o venció." : "No se pudo confirmar. Intente más tarde.", true);
+      } catch {
+        setStatus("No se pudo conectar con GameMatch.", true);
+      } finally {
+        $("submit").disabled = false;
+      }
+    });
+
+    loadPurposes();
+  </script>
+</body>
+</html>

@@ -121,6 +121,14 @@ let token = null;
 let alias = null;
 let pendingVote = null;
 let authMode = "login";
+// Finalidades que informa /consents/purposes; se cargan al abrir la página.
+let purposes = [];
+
+const PURPOSE_NAMES = {
+  correo_recuperacion: "Correo para recuperar la cuenta",
+  votos_analitica: "Usar mis votos en reportes y en el modelo",
+  novedades_correo: "Recibir novedades por correo",
+};
 let lastBody = null;
 
 const catalog = { titles: [], byKey: new Map(), info: new Map(), tags: [], tagCount: new Map(), loaded: false };
@@ -612,6 +620,8 @@ function showSession(name) {
   $("session-label").hidden = !name;
   $("session-label").textContent = name || "";
   $("session-button").textContent = name ? "Salir" : "Iniciar sesión";
+  $("privacy-button").hidden = !name;
+  if (!name && $("privacy-dialog").open) $("privacy-dialog").close();
 }
 
 function logout() {
@@ -628,6 +638,7 @@ function setAuthMode(next) {
   $("session-title").textContent = register ? "Crear una cuenta" : "Entrar a GameMatch";
   $("session-submit").textContent = register ? "Crear cuenta" : "Entrar";
   $("session-password").autocomplete = register ? "new-password" : "current-password";
+  $("register-only").hidden = !register;
   $("session-error").textContent = "";
 }
 
@@ -658,13 +669,30 @@ async function login(name, password) {
 }
 
 async function register(name, password) {
-  const resp = await postJson("/auth/register", { alias: name, password });
+  const body = { alias: name, password };
+  const child = $("reg-child").checked;
+  if (child) {
+    body.is_child = true;
+    body.guardian_email = $("reg-guardian-email").value.trim();
+  } else {
+    body.consents = selectedConsents();
+    const email = $("reg-email-input").value.trim();
+    if (body.consents.includes("correo_recuperacion") && email) body.email = email;
+  }
+  const resp = await postJson("/auth/register", body);
   if (resp.status === 409) throw new Error("Ese alias ya está en uso. Prueba con otro.");
   if (resp.status === 422) {
-    throw new Error("Revisa los datos: alias de 3 a 30 letras, números, - o _, y contraseña de 12 a 128 caracteres.");
+    throw new Error(child
+      ? "Revisa el alias, la contraseña y el correo de tu representante."
+      : "Revisa los datos: alias de 3 a 30 letras, números, - o _, y contraseña de 12 a 128 caracteres.");
   }
   if (resp.status === 503) throw new Error("Las cuentas no están disponibles en este servidor.");
   if (!resp.ok) throw new Error("No se pudo crear la cuenta. Inténtalo de nuevo.");
+  if ((await resp.json()).estado === "pendiente_representante") {
+    // No es un error: la cuenta existe, pero no se activa hasta que el representante confirme.
+    throw Object.assign(new Error("Listo. Enviamos un enlace a tu representante: podrás entrar cuando confirme la cuenta."),
+      { info: true });
+  }
   await login(name, password);
 }
 
@@ -705,6 +733,7 @@ $("session-form").addEventListener("submit", async (event) => {
     await (authMode === "register" ? register(name, password) : login(name, password));
   } catch (error) {
     $("session-error").textContent = error.message;
+    $("session-error").classList.toggle("is-info", Boolean(error.info));
     return;
   } finally {
     submit.disabled = false;
@@ -719,6 +748,116 @@ $("session-form").addEventListener("submit", async (event) => {
     setStatus(`Sesión iniciada como ${name}.`);
   }
 });
+
+/* ---------- Consentimiento ---------- */
+
+function authHeaders(extra = {}) {
+  return { ...extra, Authorization: `Bearer ${token}` };
+}
+
+// Casillas de finalidades del registro: se construyen con nodos y ninguna viene marcada.
+async function loadPurposes() {
+  let resp;
+  try {
+    resp = await fetch("/consents/purposes");
+  } catch {
+    return;
+  }
+  if (!resp.ok) return;
+  purposes = await resp.json();
+  const box = $("reg-purposes");
+  for (const purpose of purposes) {
+    const label = el("label", "check");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = purpose.code;
+    input.name = "reg-consent";
+    const text = el("span", null, PURPOSE_NAMES[purpose.code] || purpose.code);
+    text.appendChild(el("small", null, `${purpose.text} (versión ${purpose.version})`));
+    label.append(input, text);
+    box.appendChild(label);
+    if (purpose.code === "correo_recuperacion") {
+      input.addEventListener("change", () => { $("reg-email").hidden = !input.checked; });
+    }
+  }
+}
+
+function selectedConsents() {
+  return [...document.querySelectorAll("input[name=reg-consent]:checked")].map((input) => input.value);
+}
+
+$("reg-child").addEventListener("change", () => {
+  const child = $("reg-child").checked;
+  $("reg-guardian").hidden = !child;
+  // Bajo 14 años las finalidades las decide el representante, no la persona.
+  $("reg-purposes").hidden = child;
+  if (child) {
+    document.querySelectorAll("input[name=reg-consent]").forEach((input) => { input.checked = false; });
+    $("reg-email").hidden = true;
+  }
+});
+
+async function loadPrivacy() {
+  $("privacy-error").textContent = "";
+  let stateResp;
+  let historyResp;
+  try {
+    [stateResp, historyResp] = await Promise.all([
+      fetch("/me/consents", { headers: authHeaders() }),
+      fetch("/me/consents/history", { headers: authHeaders() }),
+    ]);
+  } catch {
+    $("privacy-error").textContent = "No hay conexión con la API.";
+    return;
+  }
+  if (stateResp.status === 401) {
+    $("privacy-dialog").close();
+    logout();
+    openSessionDialog("Tu sesión venció. Vuelve a entrar.");
+    return;
+  }
+  const box = $("privacy-purposes");
+  box.replaceChildren();
+  for (const item of await stateResp.json()) {
+    const info = purposes.find((p) => p.code === item.finalidad) || {};
+    const on = item.estado === "otorgado";
+    const card = el("section", "purpose");
+    const head = el("div", "purpose-head");
+    head.append(
+      el("strong", null, PURPOSE_NAMES[item.finalidad] || item.finalidad),
+      el("span", on ? "badge on" : "badge", on ? `Autorizado (v${item.version_aceptada})` : "No autorizado"),
+    );
+    const button = el("button", "btn btn-quiet", on ? "Revocar" : "Autorizar");
+    button.type = "button";
+    button.addEventListener("click", () => toggleConsent(item.finalidad, on));
+    card.append(head, el("p", null, `${info.text || ""} Versión vigente: ${item.version_vigente}.`), button);
+    box.appendChild(card);
+  }
+  const list = $("privacy-history");
+  list.replaceChildren();
+  for (const event of await historyResp.json()) {
+    const who = event.actor === "titular" ? "tú" : event.actor;
+    const name = PURPOSE_NAMES[event.finalidad] || event.finalidad;
+    list.appendChild(el("li", null, `${event.fecha} · ${name} · ${event.estado} (v${event.version}, ${who})`));
+  }
+}
+
+async function toggleConsent(purpose, isOn) {
+  const resp = await fetch(`/me/consents/${purpose}`, { method: isOn ? "DELETE" : "POST", headers: authHeaders() });
+  if (!resp.ok) {
+    $("privacy-error").textContent = resp.status === 403
+      ? "Esta finalidad la autoriza tu representante legal."
+      : "No se pudo guardar el cambio.";
+    return;
+  }
+  await loadPrivacy();
+}
+
+$("privacy-button").addEventListener("click", async () => {
+  $("privacy-dialog").showModal();
+  await loadPrivacy();
+});
+$("privacy-close").addEventListener("click", () => $("privacy-dialog").close());
 
 /* ---------- Votos ---------- */
 
@@ -1026,3 +1165,4 @@ onScroll();
 
 loadCatalog();
 loadStats();
+loadPurposes();
