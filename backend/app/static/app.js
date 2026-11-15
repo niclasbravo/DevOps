@@ -856,6 +856,95 @@ async function toggleConsent(purpose, isOn) {
 $("privacy-button").addEventListener("click", async () => {
   $("privacy-dialog").showModal();
   await loadPrivacy();
+  await loadRequests();
+});
+
+/* ---------- Ejercicio de derechos ---------- */
+
+const REQUEST_NAMES = { acceso: "Acceso y portabilidad", rectificacion: "Rectificación", supresion: "Supresión" };
+
+async function loadRequests() {
+  let resp;
+  try {
+    resp = await fetch("/me/requests", { headers: authHeaders() });
+  } catch {
+    return;
+  }
+  if (!resp.ok) return;
+  const list = $("rights-list");
+  list.replaceChildren();
+  for (const item of await resp.json()) {
+    const reason = item.motivo ? `, motivo: ${item.motivo}` : "";
+    list.appendChild(el("li", null, `${item.recibida} · ${REQUEST_NAMES[item.tipo]} · ${item.estado}${reason} · vence ${item.vence}`));
+  }
+}
+
+// El archivo se arma en memoria y se entrega al navegador para guardarlo; no queda copia en la página.
+function downloadJson(data) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+  const link = el("a");
+  link.href = url;
+  link.download = "gamematch-mis-datos.json";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+$("rights-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const type = event.submitter.value;
+  const password = $("rights-password").value;
+  $("rights-error").textContent = "";
+  $("rights-error").classList.remove("is-info");
+  if (!password) {
+    $("rights-error").textContent = "Escribe tu contraseña actual.";
+    return;
+  }
+  const body = { type, current_password: password };
+  if (type === "rectificacion") {
+    const newAlias = $("rights-alias").value.trim();
+    if (!newAlias) {
+      $("rights-error").textContent = "Escribe el alias corregido.";
+      return;
+    }
+    body.changes = { alias: newAlias };
+  }
+  if (type === "supresion" && !window.confirm("Se borrarán tu cuenta y tus votos. Esto no se puede deshacer. ¿Continuar?")) {
+    return;
+  }
+  const resp = await fetch("/me/requests", {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  $("rights-password").value = "";
+  if (resp.status === 401) {
+    $("privacy-dialog").close();
+    logout();
+    openSessionDialog("Tu sesión venció. Vuelve a entrar.");
+    return;
+  }
+  const data = await resp.json();
+  if (resp.ok && type === "acceso") {
+    downloadJson(data);
+  } else if (resp.ok && type === "supresion") {
+    $("privacy-dialog").close();
+    logout();
+    setStatus("Tu cuenta y tus votos fueron eliminados.");
+    return;
+  } else if (resp.ok && type === "rectificacion") {
+    showSession(body.changes.alias);
+    $("rights-alias").value = "";
+  }
+  const messages = {
+    200: "Listo.",
+    202: "Tu solicitud quedó en evaluación. Te responderemos dentro del plazo.",
+    403: "No pudimos verificar tu identidad. Revisa tu contraseña.",
+    409: data.detail || "No se pudo aplicar.",
+    422: "Revisa los datos: el alias admite de 3 a 30 letras, números, - o _.",
+  };
+  $("rights-error").textContent = messages[resp.status] || "No se pudo enviar la solicitud.";
+  $("rights-error").classList.toggle("is-info", resp.ok);
+  await loadRequests();
 });
 $("privacy-close").addEventListener("click", () => $("privacy-dialog").close());
 

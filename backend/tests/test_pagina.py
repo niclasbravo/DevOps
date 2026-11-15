@@ -66,3 +66,10 @@ def test_pagina_del_representante_se_sirve():
 
     resp = TestClient(api).get("/guardian.html")
     assert resp.status_code == 200 and "declares_legal_representative" in resp.text
+
+
+def test_pagina_ofrece_los_derechos_con_contrasena():
+    assert "/me/requests" in HTML and "current_password" in HTML
+    for tipo in ("acceso", "rectificacion", "supresion"):
+        assert f'value="{tipo}"' in HTML
+

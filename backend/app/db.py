@@ -13,13 +13,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "usuario": {"feedback:write", "me:read", "me:update", "me:delete", "consent:manage"},
-    "analista": {"me:read", "me:update", "me:delete", "reports:read", "consent:manage"},
+    "usuario": {"feedback:write", "me:read", "me:update", "consent:manage", "rights:request"},
+    "analista": {"me:read", "me:update", "reports:read", "consent:manage", "rights:request"},
     "admin": {
         "consent:manage",
+        "rights:request",
+        "requests:read",
+        "requests:manage",
         "me:read",
         "me:update",
-        "me:delete",
         "reports:read",
         "model:read",
         "accounts:read",
@@ -77,7 +79,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   locked_until TEXT,
   created_on TEXT NOT NULL,
   is_child INTEGER NOT NULL DEFAULT 0,
-  pending_guardian INTEGER NOT NULL DEFAULT 0
+  pending_guardian INTEGER NOT NULL DEFAULT 0,
+  legal_hold INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY,
@@ -93,7 +96,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
   actor_pseudonym TEXT,
   action TEXT NOT NULL,
   target_pseudonym TEXT,
-  outcome TEXT NOT NULL CHECK (outcome IN ('permitido', 'denegado'))
+  outcome TEXT NOT NULL CHECK (outcome IN ('permitido', 'denegado')),
+  detail TEXT                             -- qué campos o motivo, nunca valores personales
 );
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit_log es de solo inserción'); END;
@@ -127,6 +131,22 @@ BEGIN SELECT RAISE(ABORT, 'consent_events es de solo inserción'); END;
 CREATE TRIGGER IF NOT EXISTS consent_no_delete BEFORE DELETE ON consent_events
 WHEN old.ts > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-365 days')
 BEGIN SELECT RAISE(ABORT, 'consent_events se conserva 365 días'); END;
+CREATE TABLE IF NOT EXISTS rights_requests (
+  id TEXT PRIMARY KEY,
+  subject TEXT NOT NULL,                  -- seudónimo del titular, sin clave foránea: sobrevive a la supresión
+  type TEXT NOT NULL CHECK (type IN ('acceso', 'rectificacion', 'supresion')),
+  status TEXT NOT NULL CHECK (status IN
+    ('recibida', 'verificada', 'en_evaluacion', 'ejecutada', 'rechazada', 'cerrada')),
+  received_at TEXT NOT NULL,
+  verified_at TEXT,
+  decided_at TEXT,
+  closed_at TEXT,
+  due_on TEXT NOT NULL,                   -- recepción + 30 días corridos (Ley 21.719, art. 11)
+  extended INTEGER NOT NULL DEFAULT 0,    -- la prórroga se usa una sola vez
+  reason TEXT CHECK (reason IS NULL OR reason IN ('ultimo_admin', 'conservacion_por_incidente', 'dato_invalido',
+    'alias_no_disponible', 'identidad_no_verificada'))
+);
+CREATE INDEX IF NOT EXISTS rights_requests_subject ON rights_requests (subject);
 CREATE TABLE IF NOT EXISTS guardian_verifications (
   account_id TEXT PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
   token_hash TEXT NOT NULL UNIQUE,
@@ -139,6 +159,10 @@ _ADDED_COLUMNS = {
     "accounts": {
         "is_child": "INTEGER NOT NULL DEFAULT 0",
         "pending_guardian": "INTEGER NOT NULL DEFAULT 0",
+        "legal_hold": "INTEGER NOT NULL DEFAULT 0",
+    },
+    "audit_log": {
+        "detail": "TEXT",
     },
 }
 
@@ -150,6 +174,8 @@ def _db_path() -> Path:
 def _add_missing_columns(conn: sqlite3.Connection) -> None:
     for table, columns in _ADDED_COLUMNS.items():
         existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if not existing:  # la tabla no existe todavía: la crea el esquema completo
+            continue
         for name, definition in columns.items():
             if name not in existing:  # nombres fijos del código, nunca de la petición
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")

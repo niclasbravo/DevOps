@@ -90,6 +90,28 @@ def create_admin(alias: str, password: str) -> str:
     return create_account(valid.alias, valid.password, role="admin")
 
 
+def reapply_deletions() -> int:
+    """Tras restaurar una copia: vuelve a borrar las cuentas cuya supresión ya se había ejecutado.
+
+    Recalcula el seudónimo de cada cuenta restaurada y la compara con las supresiones cerradas sin motivo
+    (ejecutadas). Devuelve cuántas cuentas borró.
+    """
+    from app.crypto import pseudonymize
+    from app.rights import delete_account
+
+    removed = 0
+    with write_transaction() as conn:
+        deleted = {row["subject"] for row in conn.execute(
+            "SELECT subject FROM rights_requests WHERE type = 'supresion' AND status = 'cerrada' AND reason IS NULL"
+        )}
+        for row in conn.execute("SELECT id FROM accounts").fetchall():
+            if pseudonymize(row["id"]) in deleted:
+                delete_account(conn, row["id"])
+                removed += 1
+    logger.info("Supresiones reaplicadas: %d", removed)
+    return removed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -98,6 +120,7 @@ def main() -> None:
     admin = commands.add_parser("create-admin", help="Crea una cuenta de administrador")
     admin.add_argument("--alias", required=True)
     commands.add_parser("newsletter", help="Envío simulado de novedades a quienes lo autorizaron")
+    commands.add_parser("reapply-deletions", help="Tras restaurar una copia, vuelve a aplicar las supresiones")
     args = parser.parse_args()
     if args.command == "create-admin":
         try:
@@ -109,6 +132,8 @@ def main() -> None:
         print("Administrador creado.")
     elif args.command == "newsletter":
         print(f"Novedades enviadas: {send_newsletter()}.")
+    elif args.command == "reapply-deletions":
+        print(f"Supresiones reaplicadas: {reapply_deletions()}.")
     else:
         migrated, skipped = migrate_feedback(args.path)
         print(f"Migrados: {migrated}. Omitidos: {skipped}.")

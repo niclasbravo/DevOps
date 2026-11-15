@@ -28,6 +28,7 @@ from app.me import router as me_router
 from app.model import get_model
 from app.recommender import active_recommender, canonical_title, recommend
 from app.reports import router as reports_router
+from app.rights import router as rights_router
 
 
 @asynccontextmanager
@@ -46,6 +47,7 @@ _latencies: deque[float] = deque(maxlen=1000)
 register_error_handlers(app)
 app.include_router(auth_router)
 app.include_router(me_router)
+app.include_router(rights_router)
 app.include_router(admin_router)
 app.include_router(reports_router)
 app.include_router(consent_router)

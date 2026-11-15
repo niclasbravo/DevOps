@@ -243,6 +243,27 @@
     <p class="form-error" id="privacy-error" role="alert"></p>
     <h3 class="privacy-sub">Historial de consentimientos</h3>
     <ol class="history" id="privacy-history"></ol>
+
+    <h3 class="privacy-sub">Tus datos</h3>
+    <p class="account-hint">Cada solicitud pide tu contraseña actual para confirmar que eres tú.</p>
+    <form id="rights-form" novalidate>
+      <div class="field">
+        <label for="rights-password">Contraseña actual</label>
+        <input type="password" id="rights-password" autocomplete="current-password" required>
+      </div>
+      <div class="field">
+        <label for="rights-alias">Nuevo alias (solo para corregirlo)</label>
+        <input type="text" id="rights-alias" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="rights-actions">
+        <button type="submit" class="btn btn-quiet" value="acceso">Descargar mis datos</button>
+        <button type="submit" class="btn btn-quiet" value="rectificacion">Corregir alias</button>
+        <button type="submit" class="btn btn-quiet rights-danger" value="supresion">Eliminar mi cuenta</button>
+      </div>
+      <p class="form-error" id="rights-error" role="alert"></p>
+    </form>
+    <h3 class="privacy-sub">Mis solicitudes</h3>
+    <ol class="history" id="rights-list"></ol>
   </dialog>
 
   <template id="token-tpl">
