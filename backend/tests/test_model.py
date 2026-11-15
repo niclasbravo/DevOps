@@ -84,3 +84,54 @@ def test_tanimoto_con_vectores_binarios_es_jaccard():
     sets = [{"a", "b"}, {"a", "c", "d"}, {"c", "d"}]
     expected = [jaccard(s, {"a", "b", "c"}) for s in sets]
     assert sims == pytest.approx(expected)
+
+
+def test_recomendacion_trae_ficha_y_razones(small_model):
+    recs = small_model.recommend(["Rogue Game 3"], ["permadeath"], 5)
+    for rec in recs:
+        assert {"title", "score", "year", "genres", "themes", "modes", "reasons"} <= rec.keys()
+        assert isinstance(rec["year"], int)
+        assert 0 < len(rec["reasons"]) <= 3
+        etiquetas = set(rec["genres"]) | set(rec["themes"]) | set(rec["modes"])
+        game = small_model.games[small_model.find(rec["title"])]
+        assert set(rec["reasons"]) <= etiquetas | set(game["keywords"])
+        assert "Indie" not in rec["reasons"] and "Indie" not in rec["genres"]
+
+
+def test_razones_salen_de_los_tags_escritos(small_model):
+    recs = small_model.recommend([], ["farming"], 3)
+    assert all("farming" in rec["reasons"] for rec in recs)
+
+
+def test_recomendacion_incluye_portada_ficha_y_precio(clean_df):
+    from app.media import GameMedia
+    from ml.features import fit_bundle
+
+    bundle = fit_bundle(clean_df)
+    game = next(g for g in bundle["games"] if g["title"] == "Rogue Game 4")
+    media = GameMedia(
+        games={
+            int(game["id"]): {
+                "cover": "co1abc",
+                "url": "https://www.igdb.com/games/rogue-4",
+                "steam": 42,
+                "price": 8300,
+            }
+        }
+    )
+    from app.model import ContentModel
+
+    model = ContentModel(bundle, media=media)
+    rec = next(r for r in model.recommend(["Rogue Game 3"], [], 19) if r["title"] == "Rogue Game 4")
+    assert rec["cover_id"] == "co1abc"
+    assert rec["url"] == "https://www.igdb.com/games/rogue-4"
+    assert rec["store_url"] == "https://store.steampowered.com/app/42/"
+    assert rec["price"] == 8300
+    listado = {g["title"]: g for g in model.list_games(500, 0)}
+    assert listado["Rogue Game 4"]["cover_id"] == "co1abc"
+    assert isinstance(listado["Rogue Game 4"]["year"], int)
+
+
+def test_sin_datos_de_presentacion_los_campos_van_vacios(small_model):
+    rec = small_model.recommend(["Rogue Game 3"], [], 1)[0]
+    assert rec["cover_id"] is None and rec["url"] is None and rec["store_url"] is None and rec["price"] is None

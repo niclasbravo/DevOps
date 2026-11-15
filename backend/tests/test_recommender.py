@@ -54,3 +54,13 @@ def test_con_modelo_recommend_usa_el_modelo(monkeypatch, small_model):
     recs = rec.recommend(["Rogue Game 1"], limit=3)
     assert all(r["title"].startswith("Rogue") for r in recs)
     assert rec.active_recommender() == "ml"
+
+
+def test_jaccard_trae_el_mismo_formato_que_el_modelo():
+    recs = recommend_jaccard(["Hades"], limit=3)
+    for rec in recs:
+        assert {"title", "score", "year", "genres", "themes", "modes", "reasons"} <= rec.keys()
+        assert rec["year"] is None
+        assert set(rec["reasons"]) <= set(rec["genres"])
+    # Dead Cells comparte roguelike, accion y dificil con Hades
+    assert recs[0]["reasons"] == ["accion", "dificil", "roguelike"]
