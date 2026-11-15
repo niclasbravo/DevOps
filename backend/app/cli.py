@@ -112,6 +112,131 @@ def reapply_deletions() -> int:
     return removed
 
 
+# ---------- Contención y recuperación (plan de respuesta a incidentes) ----------
+
+
+def revoke_sessions(account_id: str | None) -> None:
+    """Los tokens emitidos antes de ahora dejan de valer: de una cuenta, o de todas con None."""
+    import time
+
+    from app.audit import record
+    from app.db import set_setting
+
+    now = time.time()
+    with write_transaction() as conn:
+        if account_id:
+            conn.execute("UPDATE accounts SET tokens_not_before = ? WHERE id = ?", (now, account_id))
+        else:
+            set_setting(conn, "tokens_not_before", repr(now))
+        record("admin:revoke_sessions", "permitido", target_id=account_id, conn=conn, resource="account",
+               detail="una cuenta" if account_id else "todas")
+
+
+def disable_account(account_id: str) -> None:
+    from app.audit import record
+
+    with write_transaction() as conn:
+        conn.execute("UPDATE accounts SET is_active = 0 WHERE id = ?", (account_id,))
+        record("admin:disable_account", "permitido", target_id=account_id, conn=conn, resource="account")
+
+
+def set_legal_hold(account_id: str, on: bool) -> None:
+    from app.audit import record
+
+    with write_transaction() as conn:
+        conn.execute("UPDATE accounts SET legal_hold = ? WHERE id = ?", (int(on), account_id))
+        record("admin:legal_hold", "permitido", target_id=account_id, conn=conn, resource="account",
+               detail="activada" if on else "levantada")
+
+
+def set_read_only(on: bool) -> None:
+    from app.audit import record
+    from app.db import set_setting
+
+    with write_transaction() as conn:
+        set_setting(conn, "read_only", "1" if on else None)
+        record("system:read_only", "permitido", conn=conn, detail="activado" if on else "desactivado")
+
+
+def export_evidence(out_dir: Path) -> tuple[Path, Path]:
+    """Copia la base con la API de respaldo de SQLite (consistente aunque la API esté en uso) y escribe su SHA-256."""
+    import datetime as dt
+    import hashlib
+    import sqlite3
+
+    from app.audit import record
+    from app.db import connect
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    copy = out_dir / f"evidencia-{stamp}.db"
+    source = connect()
+    target = sqlite3.connect(copy)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    digest = hashlib.sha256(copy.read_bytes()).hexdigest()
+    checksum = out_dir / f"{copy.name}.sha256"
+    checksum.write_text(f"{digest}  {copy.name}\n", encoding="utf-8")
+    record("system:export_evidence", "permitido", resource="database", detail=f"sha256={digest[:16]}")
+    return copy, checksum
+
+
+def verify_audit() -> bool:
+    """Verifica la cadena de la auditoría. Si está rota abre la alerta crítica integridad_auditoria."""
+    from app.alerts import open_alert
+    from app.audit import record, verify_chain
+
+    ok, bad_id = verify_chain()
+    with write_transaction() as conn:
+        if not ok:
+            open_alert(conn, "integridad_auditoria", "critica", None)
+        record("audit:verify", "permitido" if ok else "denegado", conn=conn, resource="audit_log",
+               detail=None if ok else f"fila={bad_id}")
+    return ok
+
+
+def purge_retention() -> dict[str, int]:
+    """Borra lo vencido según la política de conservación (365 días) y deja constancia en la auditoría."""
+    import datetime as dt
+
+    from app.audit import record
+    from app.crypto import pseudonymize
+    from app.db import set_setting
+
+    old = "julianday(ts) < julianday('now', '-365 days')"
+    with write_transaction() as conn:
+        anchor = conn.execute(f"SELECT hash FROM audit_log WHERE hash IS NOT NULL AND {old} ORDER BY id DESC LIMIT 1"
+                              ).fetchone()
+        audit_rows = conn.execute(f"SELECT COUNT(*) FROM audit_log WHERE {old}").fetchone()[0]
+        # Antes de purgar queda registrado cuánto se borra y el último hash eliminado, que pasa a ser el ancla.
+        record("audit:purge", "permitido", conn=conn, resource="audit_log", detail=f"filas={audit_rows}")
+        if anchor:
+            set_setting(conn, "audit_anchor", anchor["hash"])
+        conn.execute(f"DELETE FROM audit_log WHERE {old}")
+        # De consent_events se conserva el último evento de cada finalidad de las cuentas que siguen existiendo.
+        alive = {pseudonymize(row["id"]) for row in conn.execute("SELECT id FROM accounts")}
+        latest = {row["id"] for row in conn.execute(
+            "SELECT MAX(id) AS id, subject FROM consent_events GROUP BY subject, purpose") if row["subject"] in alive}
+        stale = [row["id"] for row in conn.execute(f"SELECT id FROM consent_events WHERE {old}")
+                 if row["id"] not in latest]
+        conn.executemany("DELETE FROM consent_events WHERE id = ?", [(i,) for i in stale])
+        requests = conn.execute(
+            "DELETE FROM rights_requests WHERE status = 'cerrada'"
+            " AND julianday(closed_at) < julianday('now', '-365 days')"
+        ).rowcount
+        alerts = conn.execute(f"DELETE FROM security_alerts WHERE {old}").rowcount
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        pending = conn.execute(
+            """DELETE FROM accounts WHERE pending_guardian = 1 AND id IN
+               (SELECT account_id FROM guardian_verifications WHERE expires_at < ?)""", (now,)
+        ).rowcount
+    return {"audit_log": audit_rows, "consent_events": len(stale), "rights_requests": requests,
+            "security_alerts": alerts, "cuentas_pendientes": pending}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -121,6 +246,21 @@ def main() -> None:
     admin.add_argument("--alias", required=True)
     commands.add_parser("newsletter", help="Envío simulado de novedades a quienes lo autorizaron")
     commands.add_parser("reapply-deletions", help="Tras restaurar una copia, vuelve a aplicar las supresiones")
+    revoke = commands.add_parser("revoke-sessions", help="Invalida los tokens de una cuenta o de todas")
+    group = revoke.add_mutually_exclusive_group(required=True)
+    group.add_argument("--account")
+    group.add_argument("--all", action="store_true")
+    disable = commands.add_parser("disable-account", help="Suspende una cuenta comprometida")
+    disable.add_argument("account")
+    hold = commands.add_parser("legal-hold", help="Activa o levanta la retención por incidente")
+    hold.add_argument("account")
+    hold.add_argument("--off", action="store_true")
+    read_only = commands.add_parser("read-only", help="Modo solo lectura: las escrituras responden 503")
+    read_only.add_argument("--off", action="store_true")
+    evidence = commands.add_parser("export-evidence", help="Copia la base y su SHA-256 para la investigación")
+    evidence.add_argument("--out", type=Path, required=True)
+    commands.add_parser("verify-audit", help="Verifica la cadena de integridad de la auditoría")
+    commands.add_parser("purge-retention", help="Aplica la política de conservación de 365 días")
     args = parser.parse_args()
     if args.command == "create-admin":
         try:
@@ -134,6 +274,27 @@ def main() -> None:
         print(f"Novedades enviadas: {send_newsletter()}.")
     elif args.command == "reapply-deletions":
         print(f"Supresiones reaplicadas: {reapply_deletions()}.")
+    elif args.command == "revoke-sessions":
+        revoke_sessions(None if args.all else args.account)
+        print("Sesiones revocadas.")
+    elif args.command == "disable-account":
+        disable_account(args.account)
+        print("Cuenta suspendida.")
+    elif args.command == "legal-hold":
+        set_legal_hold(args.account, not args.off)
+        print("Retención actualizada.")
+    elif args.command == "read-only":
+        set_read_only(not args.off)
+        print("Modo solo lectura " + ("desactivado." if args.off else "activado."))
+    elif args.command == "export-evidence":
+        copy, checksum = export_evidence(args.out)
+        print(f"Evidencia: {copy} ({checksum.read_text(encoding='utf-8').split()[0]})")
+    elif args.command == "verify-audit":
+        ok = verify_audit()
+        print("Auditoría íntegra." if ok else "La cadena de auditoría está rota: se abrió una alerta crítica.")
+        raise SystemExit(0 if ok else 1)
+    elif args.command == "purge-retention":
+        print(f"Purgado: {purge_retention()}")
     else:
         migrated, skipped = migrate_feedback(args.path)
         print(f"Migrados: {migrated}. Omitidos: {skipped}.")

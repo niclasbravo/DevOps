@@ -52,6 +52,8 @@ MATRIZ = [
     *_protegida("GET", "/admin/requests", 403, 403, 200),
     *_protegida("POST", "/admin/requests/{id}/decision", 403, 403, 404),  # 404: el permiso pasa, el id no existe
     *_protegida("PATCH", "/admin/accounts/{id}/legal-hold", 403, 403, 200),
+    *_protegida("GET", "/admin/alerts", 403, 403, 200),
+    *_protegida("PATCH", "/admin/alerts/{id}", 403, 403, 422),  # 422: el permiso pasa, el id no es un número
     *_protegida("POST", "/feedback", 201, 403, 403),
     *_protegida("GET", "/admin/model", 403, 403, 200),
     *_protegida("GET", "/admin/accounts", 403, 403, 200),
@@ -102,7 +104,7 @@ def test_todo_endpoint_figura_en_la_matriz():
     cubiertas = {(fila[1], fila[2]) for fila in MATRIZ} | publicas
     rutas = {
         (metodo.upper(), ruta.replace("{account_id}", "{id}").replace("{request_id}", "{id}")
-         .replace("{purpose}", "votos_analitica"))
+         .replace("{alert_id}", "{id}").replace("{purpose}", "votos_analitica"))
         for ruta, operaciones in app.openapi()["paths"].items()
         for metodo in operaciones
     }

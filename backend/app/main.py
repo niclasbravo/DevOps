@@ -10,17 +10,18 @@ from typing import Literal
 
 import numpy as np
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.admin import router as admin_router
+from app.alerts import router as alerts_router
 from app.auth import require_permission
 from app.auth import router as auth_router
 from app.catalog import CATALOG
 from app.consent import router as consent_router
 from app.crypto import pseudonymize
-from app.db import init_db, save_vote
+from app.db import init_db, is_read_only, save_vote
 from app.errors import register_error_handlers
 from app.guardian import router as guardian_router
 from app.logging_safe import configure_logging
@@ -49,6 +50,7 @@ app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(rights_router)
 app.include_router(admin_router)
+app.include_router(alerts_router)
 app.include_router(reports_router)
 app.include_router(consent_router)
 app.include_router(guardian_router)
@@ -91,6 +93,18 @@ class Feedback(BaseModel):
 
     game: str = Field(min_length=1, max_length=200, examples=["Hades"])
     vote: Literal[1, -1]
+
+
+WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def read_only_guard(request: Request, call_next):
+    """Contención: en modo solo lectura las escrituras responden 503, salvo la administración y el login."""
+    path = request.url.path
+    if request.method in WRITE_METHODS and not path.startswith("/admin") and path != "/auth/login" and is_read_only():
+        return JSONResponse(status_code=503, content={"detail": "Servicio en modo solo lectura por seguridad"})
+    return await call_next(request)
 
 
 @app.middleware("http")

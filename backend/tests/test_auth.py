@@ -87,7 +87,7 @@ def test_login_entrega_un_token_valido():
 
 def test_token_dura_treinta_minutos():
     claims = jwt.decode(create_token("abc"), options={"verify_signature": False})
-    assert claims["exp"] - claims["iat"] == 30 * 60
+    assert abs(claims["exp"] - claims["iat"] - 30 * 60) < 1  # iat lleva fracción de segundo
 
 
 def test_login_mismo_error_si_el_alias_no_existe():
@@ -296,7 +296,10 @@ def test_sin_clave_de_seudonimos_patch_me_no_se_aplica(nueva_cuenta, monkeypatch
     monkeypatch.delenv("GM_PSEUDONYM_KEY")
     cuerpo = {"current_password": CLAVE, "new_password": "clave-nueva-larga-3"}
     assert client.patch("/me", headers=headers, json=cuerpo).status_code == 503
-    assert _login(alias, CLAVE).status_code == 200
+    # Sin clave tampoco se puede iniciar sesión (el login se audita): se comprueba el hash directamente.
+    from app.crypto import verify_password
+
+    assert verify_password(_cuenta(alias)["password_hash"], CLAVE)
 
 
 def test_sin_clave_de_seudonimos_la_supresion_no_se_aplica(nueva_cuenta, monkeypatch):
