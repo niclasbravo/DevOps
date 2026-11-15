@@ -1639,3 +1639,14 @@ a.card-cover[href]:hover .cover-img {
 .history li + li {
   margin-top: 4px;
 }
+
+.rights-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.rights-danger {
+  color: var(--danger);
+}

@@ -3,11 +3,11 @@
 import sqlite3
 from contextlib import closing
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.audit import record
-from app.auth import EMAIL_PATTERN, PASSWORD_MAX, PASSWORD_MIN, is_last_admin, require_permission
+from app.auth import EMAIL_PATTERN, PASSWORD_MAX, PASSWORD_MIN, require_permission
 from app.consent import has_consent
 from app.crypto import encrypt_email, hash_password, pseudonymize, verify_password
 from app.db import connect, write_transaction
@@ -60,16 +60,3 @@ def update_me(req: AccountUpdate, account: sqlite3.Row = Depends(require_permiss
         if "email" in req.model_fields_set:  # enviar null borra el correo
             conn.execute("UPDATE accounts SET email_encrypted = ? WHERE id = ?", (new_email, account["id"]))
     return {"status": "ok"}
-
-
-@router.delete("", status_code=204)
-def delete_me(account: sqlite3.Row = Depends(require_permission("me:delete"))) -> Response:
-    """Borra la cuenta. Sin su id ya no se puede recalcular el seudónimo: los votos quedan sin vínculo."""
-    with write_transaction() as conn:
-        blocked = is_last_admin(conn, account["id"])
-        record("me:delete", "denegado" if blocked else "permitido", actor_id=account["id"], conn=conn)
-        if not blocked:
-            conn.execute("DELETE FROM accounts WHERE id = ?", (account["id"],))
-    if blocked:
-        raise HTTPException(status_code=409, detail="No se puede dejar el sistema sin administradores")
-    return Response(status_code=204)

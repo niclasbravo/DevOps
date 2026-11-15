@@ -47,7 +47,11 @@ MATRIZ = [
     *_protegida("GET", "/me/feedback", 200, 200, 200),
     *_protegida("GET", "/reports/feedback", 403, 200, 200),
     *_protegida("PATCH", "/me", 200, 200, 200),
-    *_protegida("DELETE", "/me", 204, 204, 409),  # el admin de la prueba es el último: ver test_auth
+    *_protegida("GET", "/me/requests", 200, 200, 200),
+    *_protegida("POST", "/me/requests", 200, 200, 200),
+    *_protegida("GET", "/admin/requests", 403, 403, 200),
+    *_protegida("POST", "/admin/requests/{id}/decision", 403, 403, 404),  # 404: el permiso pasa, el id no existe
+    *_protegida("PATCH", "/admin/accounts/{id}/legal-hold", 403, 403, 200),
     *_protegida("POST", "/feedback", 201, 403, 403),
     *_protegida("GET", "/admin/model", 403, 403, 200),
     *_protegida("GET", "/admin/accounts", 403, 403, 200),
@@ -65,6 +69,12 @@ def _cuerpo(ruta: str) -> dict | None:
         return {"tags": ["roguelike"]}
     if ruta == "/me":
         return {"current_password": "una-clave-larga-1"}
+    if ruta == "/me/requests":
+        return {"type": "acceso", "current_password": "una-clave-larga-1"}
+    if ruta.endswith("/decision"):
+        return {"action": "prorrogar"}
+    if ruta.endswith("/legal-hold"):
+        return {"legal_hold": False}
     if ruta.endswith("/role"):
         return {"role": "analista"}
     if ruta.endswith("/status"):
@@ -91,7 +101,8 @@ def test_todo_endpoint_figura_en_la_matriz():
     publicas = {("POST", "/auth/register"), ("POST", "/auth/login"), ("POST", "/guardian/confirm")}
     cubiertas = {(fila[1], fila[2]) for fila in MATRIZ} | publicas
     rutas = {
-        (metodo.upper(), ruta.replace("{account_id}", "{id}").replace("{purpose}", "votos_analitica"))
+        (metodo.upper(), ruta.replace("{account_id}", "{id}").replace("{request_id}", "{id}")
+         .replace("{purpose}", "votos_analitica"))
         for ruta, operaciones in app.openapi()["paths"].items()
         for metodo in operaciones
     }
@@ -203,7 +214,8 @@ def _admins_activos() -> int:
 
 
 def _borrar(_, headers):
-    return client.delete("/me", headers=headers)
+    cuerpo = {"type": "supresion", "current_password": "una-clave-larga-1"}
+    return client.post("/me/requests", headers=headers, json=cuerpo)
 
 
 def _suspender(objetivo, headers):

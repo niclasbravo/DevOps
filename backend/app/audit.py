@@ -14,6 +14,7 @@ def record(
     actor_id: str | None = None,
     target_id: str | None = None,
     conn: sqlite3.Connection | None = None,
+    detail: str | None = None,
 ) -> None:
     """Guarda el evento. Los ids se seudonimizan: leer la auditoría no revela quién es quién.
 
@@ -22,9 +23,11 @@ def record(
     actor = pseudonymize(actor_id) if actor_id else None
     target = pseudonymize(target_id) if target_id else None
     ts = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-    sql = "INSERT INTO audit_log (ts, actor_pseudonym, action, target_pseudonym, outcome) VALUES (?, ?, ?, ?, ?)"
+    sql = """INSERT INTO audit_log (ts, actor_pseudonym, action, target_pseudonym, outcome, detail)
+             VALUES (?, ?, ?, ?, ?, ?)"""
+    values = (ts, actor, action, target, outcome, detail)
     if conn is not None:
-        conn.execute(sql, (ts, actor, action, target, outcome))
+        conn.execute(sql, values)
         return
     with closing(connect()) as own, own:
-        own.execute(sql, (ts, actor, action, target, outcome))
+        own.execute(sql, values)

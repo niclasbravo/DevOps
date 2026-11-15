@@ -259,24 +259,10 @@ def test_patch_me_no_permite_cambiar_el_rol(nueva_cuenta):
     assert client.patch("/me", headers=headers, json={"current_password": CLAVE, "role": "admin"}).status_code == 422
 
 
-def test_borrar_cuenta_conserva_votos_sin_vinculo(nueva_cuenta):
-    account_id, headers = nueva_cuenta()
-    client.post("/feedback", headers=headers, json={"game": _juego(), "vote": 1})
-    assert client.delete("/me", headers=headers).status_code == 204
-    with closing(connect()) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM accounts WHERE id = ?", (account_id,)).fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0] == 1
 
 
-def test_el_ultimo_admin_no_puede_borrarse(nueva_cuenta):
-    _, headers = nueva_cuenta("admin")
-    assert client.delete("/me", headers=headers).status_code == 409
 
 
-def test_un_admin_puede_borrarse_si_queda_otro(nueva_cuenta):
-    _, headers = nueva_cuenta("admin")
-    nueva_cuenta("admin")
-    assert client.delete("/me", headers=headers).status_code == 204
 
 
 def test_denegacion_queda_auditada_con_seudonimo(nueva_cuenta):
@@ -313,9 +299,17 @@ def test_sin_clave_de_seudonimos_patch_me_no_se_aplica(nueva_cuenta, monkeypatch
     assert _login(alias, CLAVE).status_code == 200
 
 
-def test_sin_clave_de_seudonimos_delete_me_no_se_aplica(nueva_cuenta, monkeypatch):
+def test_sin_clave_de_seudonimos_la_supresion_no_se_aplica(nueva_cuenta, monkeypatch):
     _, headers = nueva_cuenta()
     monkeypatch.delenv("GM_PSEUDONYM_KEY")
-    assert client.delete("/me", headers=headers).status_code == 503
+    cuerpo = {"type": "supresion", "current_password": CLAVE}
+    assert client.post("/me/requests", headers=headers, json=cuerpo).status_code == 503
     with closing(connect()) as conn:
         assert conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0] == 1
+
+
+def test_un_admin_puede_suprimir_su_cuenta_si_queda_otro(nueva_cuenta):
+    _, headers = nueva_cuenta("admin")
+    nueva_cuenta("admin")
+    cuerpo = {"type": "supresion", "current_password": CLAVE}
+    assert client.post("/me/requests", headers=headers, json=cuerpo).status_code == 200
